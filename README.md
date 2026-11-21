@@ -17,8 +17,7 @@ Commands inside chat: `/day N` changes the dataset scope, `/refresh` imports new
 ### Dataset-day behavior
 
 - On startup, **all day files present in the bundled dataset folder are ingested into SQLite**. Existing record IDs are not imported twice.
-- **Day 1–5:** the query engine uses cumulative records through the selected day and applies that day's latest record timestamp as a hard upper bound. Later records cannot be used.
-- **Day 6–15:** the query engine searches all records currently available in SQLite. It never invents missing hidden-day records. Use `/refresh` after adding files.
+- **Day 1–15:** the query engine uses cumulative records from Day 1 through the selected day, inclusive. Both the day column and the selected day's latest timestamp are enforced; later-day records cannot influence answers even when already ingested. Missing hidden-day files are not fabricated. Use `/refresh` after adding files.
 - Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
 - Feedback rows are ingested, but person-specific preferences and correction/verdict feedback are not yet applied to question-answering. The current workspace-only session cannot safely decide which employee's preferences should govern a response.
 - The selected dataset day is separate from dates mentioned in questions. The LLM interprets natural-language date intent; Python enforces the SQL time boundary.
