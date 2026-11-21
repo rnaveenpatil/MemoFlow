@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from MemoFlow.db import get_connection, init_db
 from MemoFlow.ask_engine import _load_people, _visible_record_candidates, _task_catalog, _task_state, _interpret, _system_prompt
-from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt
+from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt, generate_briefs
 from unittest.mock import patch
 
 
@@ -123,6 +123,54 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         self.assertEqual(promises[0]["due"], "2026-11-03")
         self.assertEqual(promises[0]["sources"], ["mail1"])
         self.assertEqual(usage["input_tokens"], 100)
+
+    def test_brief_persists_hinglish_promise_and_reports_it(self):
+        chat = {
+            "id": "promise-chat", "day": 1, "org": "orgA", "type": "chat",
+            "at": "2026-11-01T10:00:00Z", "author": "alice", "client": "clientA",
+            "visibility": "team", "readers": [], "title": "Delivery",
+            "body": "kal tak bhej dungi",
+        }
+        event = {
+            "id": "meeting-record", "day": 1, "org": "orgA", "type": "event",
+            "at": "2026-11-01T10:55:00Z", "author": "alice", "client": "clientA",
+            "visibility": "team", "readers": [], "event_id": "meeting1",
+            "title": "Cobaltline sync", "start": "2026-11-01T11:00:00Z",
+            "attendees": ["alice"],
+        }
+        for record in (chat, event):
+            self.conn.execute(
+                """INSERT INTO records(id,day,org,type,at,author,client,visibility,title,body,raw_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (record["id"], record["day"], record["org"], record["type"],
+                 record["at"], record["author"], record["client"], record["visibility"],
+                 record.get("title", ""), record.get("body", ""), json.dumps(record)),
+            )
+        self.conn.commit()
+        response = {
+            "text": json.dumps({
+                "changes": [],
+                "promises": [{
+                    "owner": "alice", "what": "billing report",
+                    "due": "2026-11-02", "sources": ["promise-chat"]
+                }],
+                "fulfilled_promises": [],
+            }),
+            "usage": {"input_tokens": 120, "output_tokens": 35, "cost_usd": 0, "ms": 5},
+        }
+        with patch("MemoFlow.brief_engine.get_person_org", return_value="orgA"), \\
+             patch("MemoFlow.brief_engine.get_person_zone", return_value="UTC"), \\
+             patch("MemoFlow.brief_engine.call_llm", return_value=response):
+            briefs = generate_briefs("alice", "2026-11-01", db_path=self.db_path, dataset_day=1)
+        self.assertEqual(len(briefs), 1)
+        self.assertEqual(briefs[0]["status"], "brief")
+        self.assertEqual(briefs[0]["promises"][0]["owner"], "alice")
+        self.assertEqual(briefs[0]["promises"][0]["due"], "2026-11-02")
+        self.assertEqual(briefs[0]["promises"][0]["sources"], ["promise-chat"])
+        stored = self.conn.execute(
+            "SELECT available_day FROM promises WHERE record_id='promise-chat'"
+        ).fetchone()
+        self.assertEqual(stored["available_day"], 1)
 
     def test_model_can_mark_prior_promise_fulfilled_by_later_evidence(self):
         evidence = [{
