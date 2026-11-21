@@ -320,13 +320,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                         'is_blocker': False
                     }
                 elif to_v == 'blocked':
-                    reason = ""
-                    if 'waiting on client assets' in (rec.get('body') or '').lower():
-                        reason = " (waiting on client assets)"
-                    elif 'api access' in (rec.get('body') or '').lower():
-                        reason = " (API access not given)"
                     seen_task_field[key] = {
-                        'text': f"{title} is blocked{reason}",
+                        'text': f"{title} is blocked",
                         'sources': [rec_id],
                         'prio': 1,
                         'is_blocker': True
