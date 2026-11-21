@@ -283,7 +283,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             FROM promises p JOIN records r ON r.id = p.record_id
             WHERE p.client = ? AND p.fulfilled = 0 AND p.at <= ?
               AND (? IS NULL OR r.day <= ?)
-        """, (client, meet.get('start', ''), dataset_day, dataset_day))
+              AND (? IS NULL OR p.available_day <= ?)
+        """, (client, meet.get('start', ''), dataset_day, dataset_day, dataset_day, dataset_day))
         open_promises = []
         for promise_row in cur.fetchall():
             try:
@@ -307,10 +308,10 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             source = evidence_by_id[promise["sources"][0]]
             cur.execute(
                 """INSERT OR IGNORE INTO promises
-                   (record_id, client, owner, what, due, day, at, fulfilled, fulfilled_day)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)""",
+                   (record_id, client, owner, what, due, day, at, fulfilled, fulfilled_day, available_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)""",
                 (source["id"], client, promise["owner"], promise["what"], promise["due"],
-                 source["day"], source["at"])
+                 source["day"], source["at"], dataset_day)
             )
         for promise_source, delivery_source in fulfilled_promises:
             delivery = evidence_by_id[delivery_source]
@@ -398,10 +399,11 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         JOIN records r ON r.id = p.record_id
         WHERE p.client = ? AND p.at <= ?
           AND (? IS NULL OR r.day <= ?)
+          AND (? IS NULL OR p.available_day <= ?)
           AND (p.fulfilled = 0 OR (p.fulfilled_at IS NOT NULL AND p.fulfilled_at > ?)
                OR (p.fulfilled = 1 AND p.fulfilled_at IS NULL AND ? IS NOT NULL))
         ORDER BY p.at ASC
-        """, (client, meet.get('start', ''), dataset_day, dataset_day,
+        """, (client, meet.get('start', ''), dataset_day, dataset_day, dataset_day, dataset_day,
               meet.get('start', ''), dataset_day))
         active_promises = []
         for p_row in cur.fetchall():
