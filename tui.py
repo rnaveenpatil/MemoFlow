@@ -217,23 +217,50 @@ def _ingest_cumulative(selected_path):
         return False
 
 
-def _choose_person():
+def _resolve_workspace_person(name):
+    """Resolve a human-entered workspace name; never ask users for internal IDs."""
+    query = " ".join((name or "").casefold().split())
+    if not query:
+        return None, []
+
+    exact = [
+        (pid, person) for pid, person in PEOPLE_BY_ID.items()
+        if " ".join(person.get("name", "").casefold().split()) == query
+    ]
+    if len(exact) == 1:
+        return exact[0][0], []
+    if len(exact) > 1:
+        return None, exact
+
+    # Permit a unique full-name/partial-name match, but never guess between people.
+    matches = [
+        (pid, person) for pid, person in PEOPLE_BY_ID.items()
+        if query in " ".join(person.get("name", "").casefold().split())
+    ]
+    if len(matches) == 1:
+        return matches[0][0], []
+    return None, matches
+
+
+def _choose_workspace_person():
     if not PEOPLE_BY_ID:
-        return input("Person ID: ").strip()
-
-    print("\nAvailable people:")
-    for person_id, person in sorted(PEOPLE_BY_ID.items()):
-        print(f"  {person_id:<8} {person.get('name', 'Unknown')} — {person.get('role', '')}")
-
+        raise RuntimeError("No people.json was found. MemoFlow cannot safely establish workspace visibility.")
     while True:
-        person_id = input("\nYour person ID: ").strip()
-        if person_id in PEOPLE_BY_ID:
+        name = input("\nMemoFlow: What's your name in this workspace? ").strip()
+        person_id, matches = _resolve_workspace_person(name)
+        if person_id:
+            person = PEOPLE_BY_ID[person_id]
+            print(f"MemoFlow: Hi {person.get('name', name)}. Your workspace access is ready.")
             return person_id
-        print("That ID is not in the loaded people list. Try again.")
-
+        if matches:
+            print("MemoFlow: I found more than one possible match. Enter the full name:")
+            for _, person in matches:
+                print(f"  - {person.get('name')} ({person.get('role', 'role not listed')})")
+        else:
+            print("MemoFlow: I couldn't match that name to this workspace. Try the name shown in the people directory.")
 
 def _ask_loop(person):
-    print("\nMemoFlow is ready. Type a question, /person to change person, /file to add data, or /exit.")
+    print("\nMemoFlow is ready. Chat naturally. Use /file to add more data, /whoami to see your session, or /exit to quit.")
     while True:
         try:
             question = input("\nYou: ").strip()
@@ -246,8 +273,8 @@ def _ask_loop(person):
         command = question.casefold()
         if command in {"/exit", "exit", "quit"}:
             return
-        if command == "/person":
-            person = _choose_person()
+        if command == "/whoami":
+            print(f"MemoFlow: You are signed in as {PEOPLE_BY_ID.get(person, {}).get('name', 'Unknown')}.")
             continue
         if command == "/file":
             return "select_file"
@@ -260,49 +287,46 @@ def _ask_loop(person):
             continue
 
         if result.get("refused"):
-            print(f"MemoFlow: Request refused — {result['refused'].get('reason', 'Not authorized.')}")
+            print(f"MemoFlow: I can't provide that: {result['refused'].get('reason', 'Not authorized.')}")
         elif result.get("clarify"):
             clarification = result["clarify"]
             print(f"MemoFlow: {clarification.get('question', 'Can you clarify?')}")
             for option in clarification.get("options", []):
-                print(f"  - {option.get('id')}: {option.get('text')}")
+                print(f"  - {option.get('text', option.get('id', 'Option'))}")
         elif result.get("answer"):
             print(f"MemoFlow: {result['answer'].get('text', 'No answer returned.')}")
             sources = result["answer"].get("sources") or []
             if sources:
                 print("Sources: " + ", ".join(sources))
         else:
-            print("MemoFlow: I couldn't find a reliable answer in the available records.")
-
+            print("MemoFlow: I couldn't find a reliable answer in the records available to your account.")
 
 def run_tui():
+    init_db(reset=False)
     print("=" * 48)
     print("                 MEMOFLOW")
-    print("        Workspace memory assistant")
+    print("       Your workspace memory assistant")
     print("=" * 48)
+    print("MemoFlow uses the selected dataset as its workspace memory.")
+    print("Select a day file to load its history, or start with data already in the database.")
 
-    person = _choose_person() if PEOPLE_BY_ID else None
+    person = _choose_workspace_person()
     while True:
-        print("\n1. Select and add a day file")
-        print("2. Ask a question")
-        print("3. Exit")
-        choice = input("\nChoose an option: ").strip()
-
-        if choice == "1":
-            path = _select_jsonl_file()
-            if not path:
-                print("No file selected.")
-                continue
-            if _ingest_cumulative(path) and person is None:
-                person = _choose_person()
-        elif choice == "2":
-            if person is None:
-                person = _choose_person()
-            result = _ask_loop(person)
-            if result == "select_file":
-                continue
-        elif choice == "3":
-            print("Goodbye.")
-            return
+        path = _select_jsonl_file()
+        if not path:
+            print("No file selected. You can select one later with /file.")
         else:
-            print("Choose 1, 2, or 3.")
+            _ingest_cumulative(path)
+        break
+
+    while True:
+        result = _ask_loop(person)
+        if result == "select_file":
+            path = _select_jsonl_file()
+            if path:
+                _ingest_cumulative(path)
+            else:
+                print("No file selected.")
+            continue
+        print("Goodbye.")
+        return
