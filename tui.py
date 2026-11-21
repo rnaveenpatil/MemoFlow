@@ -56,7 +56,11 @@ def _import_feedback(conn):
         if not name.lower().endswith(".jsonl") or _day_from_name(name) is None:
             continue
         path = os.path.join(feedback_dir, name)
-        for fb in _load_jsonl(path):
+        with open(path, "r", encoding="utf-8-sig") as stream:
+            feedback_rows = [json.loads(line) for line in stream if line.strip()]
+        for fb in feedback_rows:
+            if not isinstance(fb, dict):
+                continue
             values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
                       fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
             exists = conn.execute(
