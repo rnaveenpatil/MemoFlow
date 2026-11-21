@@ -325,3 +325,25 @@ class ReplayDayBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConversationIntentTests(unittest.TestCase):
+    def test_interpret_prompt_allows_small_talk_without_dataset_evidence(self):
+        response = {
+            "text": json.dumps({
+                "intent": "conversation",
+                "conversation_response": "Hello! How can I help you today?",
+                "time_mode": "current",
+                "needs_clarification": False,
+            }),
+            "usage": {"input_tokens": 12, "output_tokens": 8, "cost_usd": 0.0, "ms": 2},
+        }
+        with patch("MemoFlow.ask_engine.call_llm", return_value=response) as mocked:
+            from MemoFlow.ask_engine import _interpret
+            result, _ = _interpret("hlo", "2026-11-06T18:05:00Z", "__workspace__:org_bw",
+                                   [], [], [], data_window={})
+        self.assertEqual(result["intent"], "conversation")
+        self.assertIn("conversation_response", result)
+        prompt = json.loads(mocked.call_args.args[0])
+        self.assertIn("ordinary conversation", prompt["instructions"].lower())
+        self.assertIn("conversation_response", prompt["required_json"])
