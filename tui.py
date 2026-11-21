@@ -93,8 +93,22 @@ def _load_jsonl(path):
     return records
 
 
-def _ingest_feedback(conn, feedback_day):
-    feedback_path = os.path.join(DATA_DIR, "feedback", f"day-{feedback_day:02d}.jsonl")
+def _find_metadata_dir(selected_path):
+    """Find the challenge pack metadata next to the selected day file."""
+    current = os.path.dirname(os.path.abspath(selected_path))
+    for _ in range(7):
+        if os.path.isfile(os.path.join(current, "people.json")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return DATA_DIR
+
+
+def _ingest_feedback(conn, feedback_day, data_dir=None):
+    data_dir = data_dir or DATA_DIR
+    feedback_path = os.path.join(data_dir, "feedback", f"day-{feedback_day:02d}.jsonl")
     if not os.path.isfile(feedback_path):
         return 0
     imported = 0
@@ -159,7 +173,8 @@ def _ingest_cumulative(selected_path):
         init_db(reset=False)
         conn = get_connection()
         try:
-            sync_workspace_metadata(conn)
+            metadata_dir = _find_metadata_dir(selected_path)
+            sync_workspace_metadata(conn, data_dir=metadata_dir)
             existing_days = {
                 row["day"] for row in conn.execute(
                     "SELECT DISTINCT day FROM records WHERE day IS NOT NULL"
@@ -197,7 +212,7 @@ def _ingest_cumulative(selected_path):
                     added += 1
                 imported[day] = added
                 if day > 1:
-                    imported_feedback += _ingest_feedback(conn, day - 1)
+                    imported_feedback += _ingest_feedback(conn, day - 1, data_dir=metadata_dir)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -210,7 +225,15 @@ def _ingest_cumulative(selected_path):
         print(f"\nCumulative import complete through Day {target_day}.")
         print(summary)
         print(f"New records imported: {total}")
+        conn = get_connection()
+        try:
+            total_in_db = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+            people_in_db = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+            clients_in_db = conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
+        finally:
+            conn.close()
         print(f"New feedback entries imported: {imported_feedback}")
+        print(f"SQLite now contains {total_in_db} records, {people_in_db} people and {clients_in_db} clients.")
         print("No future-day files were read.")
         return True
     except (OSError, ValueError) as exc:
