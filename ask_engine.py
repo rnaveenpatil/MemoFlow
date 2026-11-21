@@ -195,6 +195,11 @@ def answer_ask(person, at, ask, db_path=None):
     conn = get_connection(db_path)
     try:
         org = get_person_org(person)
+        if not org:
+            return _empty(_usage(None, started), answer={
+                "text": "I can't identify your workspace organization from the loaded people directory. Check the selected dataset's people.json.",
+                "sources": []
+            })
         clients = _load_clients(conn)
         tasks = _task_catalog(conn, at, org)
         people = [{"id": p["id"], "name": p.get("name"), "role": p.get("role")}
