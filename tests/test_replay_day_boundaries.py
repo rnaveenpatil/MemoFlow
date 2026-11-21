@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from MemoFlow.db import get_connection, init_db
 from MemoFlow.ask_engine import _load_people, _visible_record_candidates, _task_catalog, _task_state, _interpret, _system_prompt
-from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt, generate_briefs
+from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt, generate_briefs, _visible_people_names
 from unittest.mock import patch
 
 
@@ -97,6 +97,27 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         self.conn.commit()
         people = _load_people(self.conn, "orgA", dataset_day=1, person="alice")
         self.assertEqual([p["id"] for p in people], ["alice"])
+
+    def test_brief_people_names_exclude_future_and_private_metadata(self):
+        private_record = {
+            "id": "bob-private", "day": 1, "org": "orgA", "type": "note",
+            "at": "2026-11-01T12:00:00Z", "author": "bob", "client": "clientA",
+            "visibility": "private", "readers": [], "title": "Private note",
+            "body": "private content",
+        }
+        self.conn.execute(
+            """INSERT INTO records(id,day,org,type,at,author,client,visibility,title,body,raw_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("bob-private", 1, "orgA", "note", private_record["at"], "bob",
+             "clientA", "private", "Private note", "private content",
+             json.dumps(private_record)),
+        )
+        self.conn.commit()
+        names = _visible_people_names(
+            self.conn, "alice", "orgA", dataset_day=1
+        )
+        self.assertIn("alice", names)
+        self.assertNotIn("bob", names)
 
     def test_model_promise_extraction_accepts_hinglish_and_validates_source(self):
         evidence = [{
