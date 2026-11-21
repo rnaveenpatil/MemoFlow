@@ -292,7 +292,7 @@ def _resolve_query_time(interpretation, default_at):
     return {"mode": "current", "as_of": default_at, "start": None, "end": default_at}
 
 
-def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None, start_at=None, end_at=None, dataset_day=None):
+def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None, start_at=None, end_at=None, dataset_day=None, client_id=None):
     tokens = re.findall(r"[\w-]{3,}", (search_terms or "").lower())
     tokens = list(dict.fromkeys(tokens))[:12]
     if not tokens:
@@ -308,9 +308,10 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
               AND (? IS NULL OR r.at >= ?)
               AND (? IS NULL OR r.at <= ?)
               AND (? IS NULL OR r.day <= ?)
+              AND (? IS NULL OR r.client = ?)
             ORDER BY rank
             LIMIT 80
-        """, (fts_query, org, at, start_at, start_at, end_at, end_at, dataset_day, dataset_day)).fetchall()
+        """, (fts_query, org, at, start_at, start_at, end_at, end_at, dataset_day, dataset_day, client_id, client_id)).fetchall()
     except Exception:
         return []
 
@@ -432,6 +433,12 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 "question": interpretation["time_clarification"],
                 "options": []
             })
+
+        # The model may resolve a nickname, but it cannot invent or select an
+        # organization/client that was not present in the authorized client list.
+        visible_client_ids = {item["id"] for item in clients}
+        if interpretation.get("client_id") not in visible_client_ids:
+            interpretation["client_id"] = None
 
         query_time = _resolve_query_time(interpretation, at)
         if query_time is None:
@@ -611,7 +618,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             )
         candidates = _visible_record_candidates(
             conn, person, org, effective_at, search_terms, forgets=forget_terms,
-            start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day
+            start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day,
+            client_id=interpretation.get("client_id")
         )
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
