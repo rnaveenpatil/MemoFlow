@@ -130,7 +130,9 @@ def _import_workspace(selected_path, selected_day):
                 if cutoff_mode == "cumulative" and feedback_day > selected_day:
                     continue
                 path = os.path.join(feedback_dir, name)
-                for fb in _load_jsonl(path):
+                with open(path, "r", encoding="utf-8-sig") as feedback_stream:
+                    feedback_rows = [json.loads(line) for line in feedback_stream if line.strip()]
+                for fb in feedback_rows:
                     vals = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
                             fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
                     exists = conn.execute(
@@ -226,6 +228,7 @@ class MemoFlowApp:
         self.load_btn.pack(side="left", padx=8)
         self.org_var = tk.StringVar()
         self.org_box = ttk.Combobox(row, textvariable=self.org_var, state="readonly", width=24)
+        self.org_box.bind("<<ComboboxSelected>>", self._org_changed)
         self.org_box.pack(side="right")
         tk.Label(row, text="Workspace", bg="#182437", fg="#dce6f3").pack(side="right", padx=8)
 
