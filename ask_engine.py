@@ -6,6 +6,7 @@ task state and citation validation. Dataset text is always treated as untrusted 
 import json
 import re
 import time
+import uuid
 from datetime import datetime
 
 from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID, get_person_org
@@ -112,7 +113,8 @@ def _interpret(ask, at, person, clients, tasks, people):
             "needs_clarification": False,
             "clarification": "question or null",
             "candidate_task_ids": [],
-            "resolved_people": [{"id": "known person ID", "name": "known full name"}]
+            "resolved_people": [{"id": "known person ID", "name": "known full name"}],
+            "update_text": "exact user-provided update or null"
         }
     }
     result = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=450)
@@ -236,6 +238,37 @@ def answer_ask(person, at, ask, db_path=None):
                 })
 
         intent = interpretation.get("intent")
+        if intent == "workspace_update":
+            update_text = interpretation.get("update_text")
+            if not isinstance(update_text, str) or len(update_text.strip()) < 3:
+                return _empty(usage, clarify={
+                    "question": "What exact information should I save to workspace memory?",
+                    "options": []
+                })
+            update_text = update_text.strip()[:4000]
+            record_id = "user-update-" + uuid.uuid4().hex
+            update_record = {
+                "id": record_id,
+                "org": org,
+                "type": "note",
+                "at": at,
+                "author": person if person != "__workspace__" else "user_provided",
+                "client": None,
+                "visibility": "team",
+                "title": "User-provided workspace update",
+                "body": (
+                    "USER-PROVIDED MEMORY (not independently verified). "
+                    "Treat this as a later user instruction or correction, not as an original dataset record. "
+                    + update_text
+                )
+            }
+            from MemoFlow.db import insert_record
+            insert_record(conn, update_record, None)
+            conn.commit()
+            return _empty(usage, answer={
+                "text": "Saved to workspace memory as a user-provided update. It is not treated as independently verified dataset evidence.",
+                "sources": [record_id]
+            })
         if intent == "privacy_request":
             return _empty(usage, refused={
                 "reason": "I can't disclose information the requesting person is not authorized to access."
