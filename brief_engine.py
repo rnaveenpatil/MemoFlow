@@ -76,10 +76,14 @@ def _model_change_items(records, corrections, meeting, client):
     return items, result.get('usage')
 
 
-def generate_briefs(person, date, db_path=None):
+def generate_briefs(person, date, db_path=None, dataset_day=None):
     t0 = time.monotonic()
     conn = get_connection(db_path)
     cur = conn.cursor()
+    # Replay calls ingest cumulatively; default to the newest day ingested.
+    if dataset_day is None:
+        row = cur.execute("SELECT MAX(day) AS max_day FROM records").fetchone()
+        dataset_day = row["max_day"] if row and row["max_day"] is not None else None
 
     off = ZONES.get(get_person_zone(person), ZONES['Asia/Kolkata'])
     person_org = get_person_org(person)
@@ -88,7 +92,7 @@ def generate_briefs(person, date, db_path=None):
     cur.execute("SELECT what FROM forgets WHERE person IN (?, '*')", (person,))
     forgets = [r['what'] for r in cur.fetchall()]
 
-    cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference"', (person,))
+    cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference" AND (? IS NULL OR day <= ?)', (person, dataset_day, dataset_day))
     prefs = [r['words'].lower() for r in cur.fetchall()]
     skip_newsletters = any('newsletter' in p for p in prefs)
     
@@ -98,15 +102,15 @@ def generate_briefs(person, date, db_path=None):
         if m:
             max_changed = int(m.group(1))
 
-    cur.execute('SELECT words, meeting FROM feedback WHERE person = ? AND type = "correction"', (person,))
+    cur.execute('SELECT words, meeting FROM feedback WHERE person = ? AND type = "correction" AND (? IS NULL OR day <= ?)', (person, dataset_day, dataset_day))
     corrections = cur.fetchall()
 
     # 2. Find meetings for this person on date
     cur.execute('''
     SELECT r.id, r.raw_json, r.day, r.at FROM records r
-    WHERE r.type = 'event' AND r.org = ?
+    WHERE r.type = 'event' AND r.org = ? AND (? IS NULL OR r.day <= ?)
     ORDER BY r.at ASC
-    ''', (person_org,))
+    ''', (person_org, dataset_day, dataset_day))
     
     all_events = cur.fetchall()
     target_meetings = []
@@ -139,8 +143,9 @@ def generate_briefs(person, date, db_path=None):
         cur.execute('''
         SELECT r.at FROM records r
         WHERE r.type = 'event' AND r.client = ? AND r.org = ? AND r.at < ?
+          AND (? IS NULL OR r.day <= ?)
         ORDER BY r.at DESC LIMIT 1
-        ''', (client, person_org, meet.get('start', '')))
+        ''', (client, person_org, meet.get('start', ''), dataset_day, dataset_day))
         prev_row = cur.fetchone()
         if prev_row:
             window_start = prev_row['at']
@@ -148,7 +153,8 @@ def generate_briefs(person, date, db_path=None):
             cur.execute("""
             SELECT MIN(at) AS first_at FROM records
             WHERE org = ? AND client = ? AND at <= ?
-            """, (person_org, client, meet.get('start', '')))
+              AND (? IS NULL OR day <= ?)
+            """, (person_org, client, meet.get('start', ''), dataset_day, dataset_day))
             first_row = cur.fetchone()
             window_start = (first_row['first_at'] if first_row and first_row['first_at']
                             else meet.get('start', ''))
@@ -160,9 +166,10 @@ def generate_briefs(person, date, db_path=None):
         cur.execute("""
         SELECT * FROM records
         WHERE org = ? AND at >= ? AND at <= ?
+          AND (? IS NULL OR day <= ?)
           AND type IN ('note', 'chat', 'mail', 'doc', 'sheet', 'notification')
         ORDER BY at DESC LIMIT 180
-        """, (person_org, window_start, meet.get('start', '')))
+        """, (person_org, window_start, meet.get('start', ''), dataset_day, dataset_day))
         evidence = []
         for row in cur.fetchall():
             rec = json.loads(row['raw_json'])
@@ -189,9 +196,10 @@ def generate_briefs(person, date, db_path=None):
         JOIN records r ON tc.record_id = r.id
         LEFT JOIN tasks t ON tc.task_id = t.task_id
         WHERE tc.client = ? AND r.org = ? AND tc.at >= ? AND tc.at <= ?
+        AND (? IS NULL OR r.day <= ?)
         AND tc.from_val IS NOT NULL AND tc.to_val IS NOT NULL AND tc.from_val != tc.to_val
         ORDER BY tc.at ASC
-        ''', (client, person_org, window_start, meet.get('start', '')))
+        ''', (client, person_org, window_start, meet.get('start', ''), dataset_day, dataset_day))
         
         seen_task_field = {}
         task_rows = cur.fetchall()
@@ -265,8 +273,9 @@ def generate_briefs(person, date, db_path=None):
         SELECT p.*, r.raw_json FROM promises p
         JOIN records r ON r.id = p.record_id
         WHERE p.client = ? AND p.fulfilled = 0 AND p.at <= ?
+          AND (? IS NULL OR r.day <= ?)
         ORDER BY p.at ASC
-        """, (client, meet.get('start', '')))
+        """, (client, meet.get('start', ''), dataset_day, dataset_day))
         active_promises = []
         for p_row in cur.fetchall():
             try:
