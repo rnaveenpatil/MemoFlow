@@ -1,6 +1,6 @@
 """Database management with SQLite and SQLite FTS5 for MemoFlow."""
 import sqlite3, json, os, re
-from datetime import datetime
+from datetime import datetime, timedelta
 from MemoFlow.config import DB_PATH, ZONES, get_person_zone
 
 def get_connection(db_path=None):
@@ -153,11 +153,12 @@ def parse_promise_from_record(r, day):
         return None
 
     # Calculate record date
-    rec_date_str = at_str[:10]
     rec_dt = None
     try:
-        rec_dt = datetime.strptime(rec_date_str, '%Y-%m-%d')
-    except Exception:
+        rec_dt = datetime.strptime(at_str[:19], '%Y-%m-%dT%H:%M:%S')
+        # Relative promises such as "tomorrow" are interpreted in the author's time zone.
+        rec_dt += ZONES.get(get_person_zone(author), ZONES['UTC'])
+    except (TypeError, ValueError):
         pass
 
     what = None
@@ -167,9 +168,6 @@ def parse_promise_from_record(r, day):
     m1 = re.search(r'(the [^,.\n]+?)\s+kal tak', body, re.I)
     if m1 and rec_dt:
         what = m1.group(1).strip()
-        due = (rec_dt + sqlite3.Connection.__module__ and (rec_dt + ZONES['Asia/Kolkata']).date() if False else None)
-        # 1 day later
-        from datetime import timedelta
         due = (rec_dt + timedelta(days=1)).strftime('%Y-%m-%d')
 
     # Pattern 2: "by EOD today" or "by Thursday"
@@ -184,7 +182,6 @@ def parse_promise_from_record(r, day):
         m3 = re.search(r'(the [^,.\n]+?)\s+next Monday tak', body, re.I)
         if m3 and rec_dt:
             what = m3.group(1).strip()
-            from datetime import timedelta
             # Find next monday
             days_ahead = 7 - rec_dt.weekday()
             if days_ahead <= 0:
@@ -197,7 +194,6 @@ def parse_promise_from_record(r, day):
         if m4 and rec_dt:
             what = m4.group(1).strip()
             # Thursday in the same week
-            from datetime import timedelta
             thurs_offset = 3 - rec_dt.weekday()
             if thurs_offset < 0:
                 thurs_offset += 7
@@ -252,6 +248,9 @@ def insert_record(conn, r, day):
         json.dumps(r)
     ))
 
+    # Keep the full-text index idempotent when a day is re-ingested.
+    cur.execute('DELETE FROM records_fts WHERE id = ?', (r.get('id'),))
+
     # Insert into FTS5
     cur.execute('''
     INSERT INTO records_fts (id, title, body, author, client, subject, channel)
@@ -276,9 +275,9 @@ def insert_record(conn, r, day):
         if existing:
             cur_title = r.get('title') or existing['title']
             cur_client = r.get('client') or existing['client']
-            cur_owner = change.get('to') if c_field == 'owner' else existing['owner']
-            cur_due = change.get('to') if c_field == 'due' else existing['due']
-            cur_status = change.get('to') if c_field == 'status' else existing['status']
+            cur_owner = r.get('owner') or existing['owner']
+            cur_due = r.get('due') or existing['due']
+            cur_status = r.get('status') or existing['status']
             last_rec = r.get('id') if c_field in ('status', 'owner', 'due', 'created') else existing['last_record_id']
         else:
             cur_title = r.get('title') or ''
