@@ -318,7 +318,23 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
             LIMIT 80
         """, (fts_query, org, at, start_at, start_at, end_at, end_at, dataset_day, dataset_day, client_id, client_id)).fetchall()
     except Exception:
-        return []
+        rows = []
+
+    # If an alias resolves to a known client but no literal FTS token matches,
+    # fall back to a small, client-scoped recent evidence window. Authorization
+    # is still checked below before any record reaches the model.
+    if not rows and client_id:
+        rows = conn.execute("""
+            SELECT r.id, r.raw_json, r.at, 0.0 AS rank
+            FROM records r
+            WHERE r.org = ? AND r.client = ? AND r.at <= ?
+              AND (? IS NULL OR r.at >= ?)
+              AND (? IS NULL OR r.at <= ?)
+              AND (? IS NULL OR r.day <= ?)
+            ORDER BY r.at DESC
+            LIMIT 80
+        """, (org, client_id, at, start_at, start_at, end_at, end_at,
+              dataset_day, dataset_day)).fetchall()
 
     out = []
     for row in rows:
@@ -636,12 +652,16 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             search_terms += " " + " ".join(
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
-        if interpretation.get("client_id") not in visible_client_ids:
-            interpretation["client_id"] = None
+        client_id = interpretation.get("client_id")
+        if client_id not in visible_client_ids:
+            client_id = None
+        if client_id:
+            client_name = next((item["name"] for item in clients if item["id"] == client_id), "")
+            search_terms += f" {client_id} {client_name}"
         candidates = _visible_record_candidates(
             conn, person, org, effective_at, search_terms, forgets=forget_terms,
             start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day,
-            client_id=interpretation.get("client_id")
+            client_id=client_id
         )
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
