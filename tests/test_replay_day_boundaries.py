@@ -168,7 +168,7 @@ class ReplayDayBoundaryTests(unittest.TestCase):
             "usage": {"input_tokens": 100, "output_tokens": 30, "cost_usd": 0.0, "ms": 5},
         }
         with patch("MemoFlow.brief_engine.call_llm", return_value=response):
-            changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
+            changes, promises, fulfilled, usage = _model_change_items(evidence, [], "meeting1", "clientA")
         self.assertEqual(promises, [])
         self.assertEqual(fulfilled, [])
 
