@@ -197,6 +197,7 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         feedback_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(feedback)")}
         self.assertIn("day", forget_cols)
         self.assertIn("fulfilled_day", promise_cols)
+        self.assertIn("fulfilled_at", promise_cols)
         self.assertIn("available_day", feedback_cols)
 
 
