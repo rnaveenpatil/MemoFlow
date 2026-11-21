@@ -94,6 +94,8 @@ def _load_people(conn, org=None):
 
 
 def _person_org(conn, person_id):
+    if str(person_id).startswith("__workspace__:"):
+        return str(person_id).split(":", 1)[1] or None
     if person_id == "__workspace__":
         orgs = sorted({p.get("org") for p in _load_people(conn) if p.get("org")})
         return orgs[0] if len(orgs) == 1 else None
@@ -103,10 +105,10 @@ def _person_org(conn, person_id):
     return row["org"] if row else get_person_org(person_id)
 
 
-def _dataset_time_range(conn, org):
+def _dataset_time_range(conn, org, cutoff=None):
     row = conn.execute(
-        "SELECT MIN(at) AS first_at, MAX(at) AS last_at FROM records WHERE org = ?",
-        (org,)
+        "SELECT MIN(at) AS first_at, MAX(at) AS last_at FROM records WHERE org = ? AND (? IS NULL OR at <= ?)",
+        (org, cutoff, cutoff)
     ).fetchone()
     if not row:
         return {}
@@ -318,18 +320,19 @@ def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
     }
 
 
-def answer_ask(person, at, ask, db_path=None):
+def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
     started = time.monotonic()
     init_db(reset=False, db_path=db_path)
     conn = get_connection(db_path)
     try:
         org = _person_org(conn, person)
+        workspace_session = str(person).startswith("__workspace__")
         if not org:
             return _empty(_usage(None, started), answer={
                 "text": "I can't identify the workspace organization from the loaded people directory.",
                 "sources": []
             })
-        if person == "__workspace__":
+        if workspace_session:
             forget_rows = conn.execute(
                 "SELECT what FROM forgets WHERE person = '*'"
             ).fetchall()
@@ -341,7 +344,8 @@ def answer_ask(person, at, ask, db_path=None):
         clients = _load_clients(conn)
         tasks = []
         people = _load_people(conn, org)
-        data_window = _dataset_time_range(conn, org)
+        cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
+        data_window = _dataset_time_range(conn, org, cutoff=cutoff)
         interpretation, interpretation_call = _interpret(
             ask, at, person, clients, tasks, people, data_window=data_window
         )
@@ -367,6 +371,16 @@ def answer_ask(person, at, ask, db_path=None):
                 "options": []
             })
         effective_at = query_time["as_of"]
+        # The selected dataset day is a hard upper bound for every retrieval path.
+        if cutoff:
+            if query_time.get("start") and query_time["start"] > cutoff:
+                return _empty(usage, answer={
+                    "text": "That date is beyond the selected dataset-day limit. Increase the day selector to search more of the loaded dataset.",
+                    "sources": []
+                })
+            effective_at = min(effective_at, cutoff)
+            query_time["as_of"] = effective_at
+            query_time["end"] = min(query_time["end"], cutoff) if query_time.get("end") else cutoff
         tasks = _task_catalog(conn, effective_at, org, person, forgets=forget_terms)
 
         # Task names/IDs are fetched only after the time boundary is resolved.
@@ -438,7 +452,7 @@ def answer_ask(person, at, ask, db_path=None):
                 "org": org,
                 "type": "note",
                 "at": at,
-                "author": person if person != "__workspace__" else "user_provided",
+                "author": "user_provided" if workspace_session else person,
                 "client": None,
                 "visibility": "team",
                 "title": "User-provided workspace update",
