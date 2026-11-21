@@ -143,11 +143,28 @@ class ReplayDayBoundaryTests(unittest.TestCase):
             changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
         self.assertEqual(promises, [])
 
+    def test_feedback_is_not_visible_before_its_availability_day(self):
+        self.conn.execute(
+            """INSERT INTO feedback(day,person,type,words,available_day)
+               VALUES(1,'alice','correction','billing owner changed',2)"""
+        )
+        self.conn.commit()
+        day_one = self.conn.execute(
+            "SELECT words FROM feedback WHERE person='alice' AND available_day <= 1"
+        ).fetchall()
+        day_two = self.conn.execute(
+            "SELECT words FROM feedback WHERE person='alice' AND available_day <= 2"
+        ).fetchall()
+        self.assertEqual(day_one, [])
+        self.assertEqual(len(day_two), 1)
+
     def test_schema_has_day_provenance_columns(self):
         forget_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(forgets)")}
         promise_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(promises)")}
+        feedback_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(feedback)")}
         self.assertIn("day", forget_cols)
         self.assertIn("fulfilled_day", promise_cols)
+        self.assertIn("available_day", feedback_cols)
 
 
 if __name__ == "__main__":
