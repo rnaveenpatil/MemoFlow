@@ -243,7 +243,7 @@ def answer_ask(person, at, ask, db_path=None):
             status = record.get("status")
             title = record.get("title") or task_id
             if field == "owner":
-                value = f"{owner_name} ({owner})" if owner else "No owner is recorded"
+                value = owner_name if owner_name else "No owner is recorded"
                 answer_text = f"{value} owns {title}."
             elif field == "due":
                 answer_text = f"{title} is due on {due}." if due else f"No due date is recorded for {title}."
