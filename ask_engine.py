@@ -4,6 +4,7 @@ The model interprets the question. Python owns retrieval, time boundaries, permi
 task state and citation validation. Dataset text is always treated as untrusted input.
 """
 import json
+import os
 import re
 import time
 import uuid
@@ -21,6 +22,17 @@ Use only the supplied records and task metadata. Do not infer facts from general
 Respect the question's as-of timestamp. If the evidence is ambiguous, ask a clarification.
 Return only valid JSON matching the requested shape. Never invent source IDs.
 """
+
+def _system_prompt():
+    """Load repository operating guidance when available; code remains authoritative."""
+    guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.md")
+    try:
+        with open(guide_path, encoding="utf-8") as handle:
+            guide = handle.read(12000)
+    except OSError:
+        guide = ""
+    return SYSTEM + ("\\n\\nRepository operating guidance (secondary to enforced code rules):\\n" + guide if guide else "")
+
 
 
 def _usage(result, started):
@@ -600,7 +612,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 "clarify": None
             }
         }
-        answer_call = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=500)
+        answer_call = call_llm(json.dumps(prompt, ensure_ascii=False), _system_prompt(), max_tokens=500)
         if not answer_call:
             return _empty(usage, answer={"text": "The language model is unavailable, so I can't safely summarize these records.", "sources": []})
         usage2 = _usage(answer_call, started)
