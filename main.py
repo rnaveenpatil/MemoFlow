@@ -33,6 +33,7 @@ def _ingest_feedback(conn, feedback_day):
     for fb in _read_jsonl(path):
         values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
                   fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
+        available_day = feedback_day + 1
         exists = conn.execute(
             """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
                AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
@@ -42,8 +43,8 @@ def _ingest_feedback(conn, feedback_day):
             continue
         conn.execute(
             """INSERT INTO feedback
-            (day, person, type, words, meeting, topic, verdict)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""", values
+            (day, person, type, words, meeting, topic, verdict, available_day)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", values + (available_day,)
         )
         if fb.get("type") == "forget":
             forget_exists = conn.execute(
@@ -53,7 +54,7 @@ def _ingest_feedback(conn, feedback_day):
             if not forget_exists:
                 conn.execute(
                     "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
-                    (fb.get("person"), fb.get("words"), fb.get("day", feedback_day))
+                    (fb.get("person"), fb.get("words"), available_day)
                 )
         count += 1
     return count
@@ -89,7 +90,7 @@ def handle_ingest(day):
         conn.execute("DELETE FROM records WHERE day > ?", (day,))
         conn.execute("DELETE FROM task_changes WHERE day > ?", (day,))
         conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
-        conn.execute("DELETE FROM feedback WHERE day > ?", (day,))
+        conn.execute("DELETE FROM feedback WHERE available_day > ?", (day,))
         conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
         conn.execute("DELETE FROM promises WHERE day > ?", (day,))
         conn.execute(
