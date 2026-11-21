@@ -65,13 +65,15 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
     }
     result = call_llm(json.dumps(prompt, ensure_ascii=False), _brief_system_prompt(), max_tokens=700)
     if not result:
-        return [], None
+        return [], [], None
     raw = result.get("text", "").strip()
     raw = re.sub(r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", "", raw, flags=re.I)
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
-        return [], result.get('usage')
+        return [], [], result.get('usage')
+    if not isinstance(parsed, dict):
+        return [], [], result.get('usage')
     allowed = {r["id"] for r in records}
     by_id = {r["id"]: r for r in records}
     items = []
