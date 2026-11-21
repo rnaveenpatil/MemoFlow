@@ -72,11 +72,12 @@ def _task_catalog(conn, at, org):
     """, (org, at)).fetchall()
     # Collapse multiple versions of the same task to the newest title/client row.
     by_id = {}
+    # Rows are newest-first. Keep the first snapshot for each task.
     for row in rows:
-        by_id[row["task_id"]] = {
+        by_id.setdefault(row["task_id"], {
             "id": row["task_id"], "title": row["title"] or "",
             "client": row["client"]
-        }
+        })
     return list(by_id.values())
 
 
