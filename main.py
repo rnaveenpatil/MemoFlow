@@ -92,7 +92,7 @@ def handle_ingest(day):
         conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
         conn.execute("DELETE FROM feedback WHERE available_day > ?", (day,))
         conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
-        conn.execute("DELETE FROM promises WHERE day > ?", (day,))
+        conn.execute("DELETE FROM promises WHERE available_day > ?", (day,))
         conn.execute(
             "UPDATE promises SET fulfilled = 0, fulfilled_day = NULL, fulfilled_at = NULL "
             "WHERE fulfilled_day > ?", (day,)
