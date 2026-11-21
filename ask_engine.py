@@ -674,7 +674,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day,
             client_id=client_id
         )
-        if not candidates:
+        if not candidates and not user_updates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
 
         prompt = {
@@ -720,7 +720,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             return _empty(usage, answer={"text": "I couldn't produce a reliable answer from the available records.", "sources": []})
 
         allowed = {r["id"] for r in candidates}
-        sources = [s for s in (generated.get("sources") or []) if s in allowed]
+        allowed_updates = {item["id"] for item in user_updates}
+        sources = [s for s in (generated.get("sources") or []) if s in allowed or s in allowed_updates]
         if not sources:
             return _empty(usage, answer={"text": "The available records did not support a verifiable answer.", "sources": []})
         matched = [
