@@ -146,6 +146,10 @@ def init_db(reset=False, db_path=None):
         what TEXT
     );
     ''')
+    # Migrate older databases so forget rules obey the same replay-day boundary.
+    forget_columns = {row["name"] for row in cur.execute("PRAGMA table_info(forgets)")}
+    if "day" not in forget_columns:
+        cur.execute("ALTER TABLE forgets ADD COLUMN day INTEGER")
 
     cur.execute('''
     CREATE TABLE IF NOT EXISTS promises (
