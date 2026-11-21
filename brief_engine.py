@@ -89,7 +89,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
     person_org = get_person_org(person)
 
     # 1. Fetch user feedback / preferences / forgets
-    cur.execute("SELECT what FROM forgets WHERE person IN (?, '*')", (person,))
+    cur.execute("SELECT what FROM forgets WHERE person IN (?, '*') AND (day IS NULL OR day <= ?)", (person, dataset_day))
     forgets = [r['what'] for r in cur.fetchall()]
 
     cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference" AND (? IS NULL OR day <= ?)', (person, dataset_day, dataset_day))
