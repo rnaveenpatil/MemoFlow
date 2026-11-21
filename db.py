@@ -154,6 +154,23 @@ def init_db(reset=False, db_path=None):
     forget_columns = {row["name"] for row in cur.execute("PRAGMA table_info(forgets)")}
     if "day" not in forget_columns:
         cur.execute("ALTER TABLE forgets ADD COLUMN day INTEGER")
+    # Older feedback-derived forget rows used the source day, not the day they
+    # became available. Correct those rows from feedback provenance.
+    cur.execute("""
+        UPDATE forgets
+        SET day = (
+            SELECT MAX(available_day) FROM feedback
+            WHERE feedback.person = forgets.person
+              AND feedback.words = forgets.what
+              AND feedback.type = 'forget'
+        )
+        WHERE EXISTS (
+            SELECT 1 FROM feedback
+            WHERE feedback.person = forgets.person
+              AND feedback.words = forgets.what
+              AND feedback.type = 'forget'
+        )
+    """)
 
     cur.execute('''
     CREATE TABLE IF NOT EXISTS promises (
