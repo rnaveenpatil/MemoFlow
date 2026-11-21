@@ -277,7 +277,7 @@ def run_tui():
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            result = answer_ask(person, now, question, dataset_cutoff=cutoff, dataset_day=day)
+            result = answer_ask(person, now, question, dataset_cutoff=cutoff, dataset_day=day, include_user_updates=True)
             _show_result(result)
         except Exception as exc:
             print(f"Request failed: {exc}\n")
