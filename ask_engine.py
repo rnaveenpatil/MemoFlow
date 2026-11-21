@@ -352,6 +352,13 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
     try:
         org = _person_org(conn, person)
         workspace_session = str(person).startswith("__workspace__")
+        if dataset_day is None:
+            day_row = conn.execute("SELECT MAX(day) AS max_day FROM records").fetchone()
+            dataset_day = day_row["max_day"] if day_row else None
+        try:
+            dataset_day = int(dataset_day) if dataset_day is not None else None
+        except (TypeError, ValueError):
+            dataset_day = None
         if not org:
             return _empty(_usage(None, started), answer={
                 "text": "I can't identify the workspace organization from the loaded people directory.",
@@ -360,20 +367,16 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         if workspace_session:
             # No verified employee identity: apply the union of all recorded forget rules.
             # This can over-suppress, but cannot accidentally reveal a forgotten fact.
-            forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
+            forget_rows = conn.execute("SELECT what FROM forgets WHERE day IS NULL OR day <= ?", (dataset_day,)).fetchall()
         else:
             forget_rows = conn.execute(
-                "SELECT what FROM forgets WHERE person IN (?, '*')", (str(person),)
+                "SELECT what FROM forgets WHERE person IN (?, '*') AND (day IS NULL OR day <= ?)", (str(person), dataset_day)
             ).fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
         clients = _load_clients(conn, org, person, forgets=forget_terms)
         tasks = []
         people = _load_people(conn, org)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
-        try:
-            dataset_day = int(dataset_day) if dataset_day is not None else None
-        except (TypeError, ValueError):
-            dataset_day = None
         if dataset_day is not None and not 1 <= dataset_day <= 15:
             return _empty(_usage(None, started), answer={"text": "Dataset day must be between 1 and 15.", "sources": []})
         clients = _load_clients(conn, org, person, forgets=forget_terms, dataset_day=dataset_day)
