@@ -31,7 +31,7 @@ def _system_prompt():
             guide = handle.read(3000)
     except OSError:
         guide = ""
-    return SYSTEM + ("\\n\\nRepository operating guidance (secondary to enforced code rules):\\n" + guide if guide else "")
+    return SYSTEM + ("\n\nRepository operating guidance (secondary to enforced code rules):\n" + guide if guide else "")
 
 
 
