@@ -14,7 +14,7 @@ def _brief_system_prompt():
     guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.md")
     try:
         with open(guide_path, encoding="utf-8") as handle:
-            guide = handle.read(12000)
+            guide = handle.read(3000)
     except OSError:
         guide = ""
     return base + ("\\n\\nRepository operating guidance (secondary to enforced code rules):\\n" + guide if guide else "")
@@ -44,7 +44,7 @@ def _model_change_items(records, corrections, meeting, client):
     prompt = {
         "meeting": meeting,
         "client_id": client,
-        "records": records[:45],
+        "records": records,
         "corrections": [dict(words=r["words"], meeting=r["meeting"]) for r in corrections],
         "instructions": (
             "Identify material changes since the previous meeting for this client. "
@@ -181,7 +181,10 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         ORDER BY at DESC LIMIT 180
         """, (person_org, window_start, meet.get('start', ''), dataset_day, dataset_day))
         evidence = []
+        evidence_chars = 0
         for row in cur.fetchall():
+            if evidence_chars >= 18000:
+                break
             rec = json.loads(row['raw_json'])
             if rec.get('client') not in (None, client):
                 continue
@@ -189,14 +192,19 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                 continue
             if is_newsletter_or_spam(rec):
                 continue
-            evidence.append({
+            item = {
                 'id': rec.get('id'),
                 'type': rec.get('type'),
                 'at': rec.get('at'),
                 'author': rec.get('author'),
                 'title': rec.get('title') or rec.get('subject') or '',
-                'body': (rec.get('body') or '')[:1400]
-            })
+                'body': (rec.get('body') or '')[:1000]
+            }
+            item_size = len(json.dumps(item, ensure_ascii=False))
+            if evidence_chars + item_size > 18000:
+                continue
+            evidence.append(item)
+            evidence_chars += item_size
         model_items, model_usage = _model_change_items(evidence, corrections, meet_id, client)
         changed_items.extend(model_items)
 
