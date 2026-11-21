@@ -338,7 +338,7 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
     # Hard cap serialized evidence to stay within the question token budget.
     bounded, used = [], 0
     for item in out:
-        remaining = 12000 - used
+        remaining = 8000 - used
         if remaining <= 0:
             break
         body = item.get("body") or ""
