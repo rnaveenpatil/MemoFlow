@@ -194,10 +194,19 @@ def answer_ask(person, at, ask, db_path=None):
     started = time.monotonic()
     conn = get_connection(db_path)
     try:
-        org = get_person_org(person)
+        if person == "__workspace__":
+            workspace_orgs = sorted({p.get("org") for p in PEOPLE_BY_ID.values() if p.get("org")})
+            if len(workspace_orgs) != 1:
+                return _empty(_usage(None, started), answer={
+                    "text": "I need a single workspace organization to safely search team-visible records. The loaded people directory contains multiple organizations or none.",
+                    "sources": []
+                })
+            org = workspace_orgs[0]
+        else:
+            org = get_person_org(person)
         if not org:
             return _empty(_usage(None, started), answer={
-                "text": "I can't identify your workspace organization from the loaded people directory. Check the selected dataset's people.json.",
+                "text": "I can't identify the workspace organization from the loaded people directory.",
                 "sources": []
             })
         clients = _load_clients(conn)
