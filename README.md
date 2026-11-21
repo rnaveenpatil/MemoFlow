@@ -10,14 +10,15 @@ Run:
 python main.py
 ```
 
-The desktop-style Tkinter interface includes a **MEMOFLOW** banner, a dataset-day selector (1–15), JSONL file picker, workspace selector, scrollable chat transcript, and a message composer at the bottom. Press **Ctrl+Enter** or click **Send** to ask a question.
+The Tkinter interface automatically discovers the bundled dataset, imports all available day files into SQLite, and opens the chat. No file picker or manual ingestion is required. The interface includes a dataset-day selector (1–15), workspace selector, scrollable chat transcript, and message composer. Press **Ctrl+Enter** or click **Send** to ask a question. Use **Refresh database** only after adding new dataset files.
 
 ### Dataset-day behavior
 
-- **Day 1–5:** imports cumulative source files Day 1 through the selected day. The query engine applies the selected day's latest record timestamp as a hard upper bound, so later records cannot be used to answer.
-- **Day 6–15:** imports and searches every available day file in the selected dataset folder. It does not guess that hidden days exist; if the supplied files do not contain the answer, MemoFlow says the evidence is unavailable.
-- Re-imports are idempotent. Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
-- The selected dataset day is separate from the date in a question. Natural-language dates are resolved by the LLM; Python applies the SQL time boundary.
+- On startup, **all day files present in the bundled dataset folder are ingested into SQLite**. Existing record IDs are not imported twice.
+- **Day 1–5:** the query engine uses cumulative records through the selected day and applies that day's latest record timestamp as a hard upper bound. Later records cannot be used.
+- **Day 6–15:** the query engine searches all records currently available in SQLite. It never invents missing hidden-day records. Use **Refresh database** after adding files.
+- Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
+- The selected dataset day is separate from dates mentioned in questions. The LLM interprets natural-language date intent; Python enforces the SQL time boundary.
 
 ### Privacy and identity
 
