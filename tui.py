@@ -129,9 +129,7 @@ def bootstrap_dataset():
 
 
 def _cutoff_for_day(day):
-    # Day 1–5 are cumulative. Day 6+ intentionally means all loaded records.
-    if day > 5:
-        return None
+    # Every selected day is cumulative. Never remove the day boundary for hidden days.
     conn = get_connection()
     try:
         row = conn.execute(
@@ -200,10 +198,7 @@ def _show_result(result):
 
 
 def _print_scope(day, cutoff):
-    if day <= 5:
-        print(f"Scope: cumulative Days 1–{day}; hard cutoff: {cutoff or 'no records'}")
-    else:
-        print("Scope: all records currently loaded in SQLite (no future data is fabricated).")
+    print(f"Scope: cumulative Days 1–{day}; hard day boundary enforced (timestamp cutoff: {cutoff or 'no records'}).")
 
 
 def run_tui():
@@ -249,7 +244,7 @@ def run_tui():
             break
         if command == "/help":
             print("Ask any question about accessible workspace records.")
-            print("/day N   Change dataset scope (1–5 cumulative; 6–15 all loaded records)")
+            print("/day N   Change dataset scope (cumulative Days 1–N; later days are excluded)")
             print("/refresh Re-import newly added day/feedback files into SQLite")
             print("/exit   Quit MemoFlow\n")
             continue
@@ -280,7 +275,7 @@ def run_tui():
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            result = answer_ask(person, now, question, dataset_cutoff=cutoff)
+            result = answer_ask(person, now, question, dataset_cutoff=cutoff, dataset_day=day)
             _show_result(result)
         except Exception as exc:
             print(f"Request failed: {exc}\n")
