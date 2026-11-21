@@ -325,3 +325,56 @@ class ReplayDayBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConversationIntentTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmp.name, "conversation.sqlite3")
+        init_db(db_path=self.db_path)
+        conn = get_connection(self.db_path)
+        conn.execute(
+            "INSERT INTO people(person_id,org,name,role,raw_json) VALUES(?,?,?,?,?)",
+            ("alice", "orgA", "Alice", "manager", "{}"),
+        )
+        conn.commit()
+        conn.close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_greeting_returns_natural_answer_without_evidence_lookup(self):
+        from MemoFlow.ask_engine import answer_ask
+        interpretation = {
+            "intent": "conversation",
+            "conversation_response": "Hello! How can I help you today?",
+        }
+        call = {"usage": {"input_tokens": 12, "output_tokens": 8, "cost_usd": 0.0, "ms": 2}}
+        with patch("MemoFlow.ask_engine._interpret", return_value=(interpretation, call)):
+            result = answer_ask(
+                "__workspace__:orgA", "2026-11-06T18:05:00Z", "hlo",
+                db_path=self.db_path, dataset_day=1,
+            )
+        self.assertEqual(result["answer"]["text"], "Hello! How can I help you today?")
+        self.assertEqual(result["answer"]["sources"], [])
+        self.assertIsNone(result["clarify"])
+
+    def test_interpret_prompt_allows_small_talk_without_dataset_evidence(self):
+        response = {
+            "text": json.dumps({
+                "intent": "conversation",
+                "conversation_response": "Hello! How can I help you today?",
+                "time_mode": "current",
+                "needs_clarification": False,
+            }),
+            "usage": {"input_tokens": 12, "output_tokens": 8, "cost_usd": 0.0, "ms": 2},
+        }
+        with patch("MemoFlow.ask_engine.call_llm", return_value=response) as mocked:
+            from MemoFlow.ask_engine import _interpret
+            result, _ = _interpret("hlo", "2026-11-06T18:05:00Z", "__workspace__:org_bw",
+                                   [], [], [], data_window={})
+        self.assertEqual(result["intent"], "conversation")
+        self.assertIn("conversation_response", result)
+        prompt = json.loads(mocked.call_args.args[0])
+        self.assertIn("ordinary conversation", prompt["instructions"].lower())
+        self.assertIn("conversation_response", prompt["required_json"])
