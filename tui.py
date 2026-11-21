@@ -60,18 +60,19 @@ def _import_feedback(conn):
                 feedback_rows.append(fb)
         for fb in feedback_rows:
             feedback_day = _day_from_name(name)
+            available_day = feedback_day + 1
             values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
                       fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
             exists = conn.execute(
                 """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
-                   AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
-                values
+                   AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? AND available_day IS ? LIMIT 1""",
+                values + (available_day,)
             ).fetchone()
             if exists:
                 continue
             conn.execute(
-                """INSERT INTO feedback(day,person,type,words,meeting,topic,verdict)
-                   VALUES(?,?,?,?,?,?,?)""", values
+                """INSERT INTO feedback(day,person,type,words,meeting,topic,verdict,available_day)
+                   VALUES(?,?,?,?,?,?,?,?)""", values + (available_day,)
             )
             if str(fb.get("type", "")).casefold() == "forget" and fb.get("words"):
                 forget_exists = conn.execute(
@@ -80,7 +81,7 @@ def _import_feedback(conn):
                 ).fetchone()
                 if not forget_exists:
                     conn.execute("INSERT INTO forgets(person,what,day) VALUES(?,?,?)",
-                                 (fb.get("person") or "*", fb["words"], fb.get("day", feedback_day)))
+                                 (fb.get("person") or "*", fb["words"], available_day))
             added += 1
     return added
 
