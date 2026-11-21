@@ -85,7 +85,7 @@ def generate_briefs(person, date, db_path=None):
     person_org = get_person_org(person)
 
     # 1. Fetch user feedback / preferences / forgets
-    cur.execute('SELECT what FROM forgets WHERE person = ?', (person,))
+    cur.execute("SELECT what FROM forgets WHERE person IN (?, '*')", (person,))
     forgets = [r['what'] for r in cur.fetchall()]
 
     cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference"', (person,))
@@ -142,7 +142,16 @@ def generate_briefs(person, date, db_path=None):
         ORDER BY r.at DESC LIMIT 1
         ''', (client, person_org, meet.get('start', '')))
         prev_row = cur.fetchone()
-        window_start = prev_row['at'] if prev_row else '2026-11-01T00:00:00Z'
+        if prev_row:
+            window_start = prev_row['at']
+        else:
+            cur.execute("""
+            SELECT MIN(at) AS first_at FROM records
+            WHERE org = ? AND client = ? AND at <= ?
+            """, (person_org, client, meet.get('start', '')))
+            first_row = cur.fetchone()
+            window_start = (first_row['first_at'] if first_row and first_row['first_at']
+                            else meet.get('start', ''))
 
         # Candidate changes
         changed_items = []
