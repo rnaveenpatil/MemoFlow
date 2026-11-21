@@ -20,11 +20,14 @@ Commands inside chat: `/day N` changes the dataset scope, `/refresh` imports new
 - **Day 1–5:** the query engine uses cumulative records through the selected day and applies that day's latest record timestamp as a hard upper bound. Later records cannot be used.
 - **Day 6–15:** the query engine searches all records currently available in SQLite. It never invents missing hidden-day records. Use `/refresh` after adding files.
 - Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
+- Feedback rows are ingested, but person-specific preferences and correction/verdict feedback are not yet applied to question-answering. The current workspace-only session cannot safely decide which employee's preferences should govern a response.
 - The selected dataset day is separate from dates mentioned in questions. The LLM interprets natural-language date intent; Python enforces the SQL time boundary.
 
 ### Privacy and identity
 
 The terminal session does not authenticate an individual employee. It can read **team-visible** records only; private and restricted records are denied. Do not treat selecting a workspace or mentioning an employee name as identity verification. Private/restricted access requires a verified member login. Organization, visibility, and forget filters are applied before records reach the LLM. Client metadata and dataset time hints are also restricted to readable records.
+
+**Deployment limitation:** the SQLite database is local and is not encrypted by this application. Anyone who can read the database file or run code as the same OS user can bypass the chat-layer filters. Do not deploy this terminal mode as a multi-user security boundary on a shared machine.
 
 ### Chat behavior
 
