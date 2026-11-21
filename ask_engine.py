@@ -62,23 +62,29 @@ def _load_clients(conn):
         return [{"id": r["client"], "name": r["client"]} for r in rows]
 
 
-def _task_catalog(conn, at, org):
+def _task_catalog(conn, at, org, person, forgets=None):
     rows = conn.execute("""
-        SELECT r.task_id, r.title, r.client, MAX(r.at) AS last_at
-        FROM records r
-        WHERE r.type = 'task' AND r.org = ? AND r.at <= ? AND r.task_id IS NOT NULL
-        GROUP BY r.task_id, r.title, r.client
-        ORDER BY last_at DESC
-        LIMIT 160
+        SELECT task_id, title, client, raw_json
+        FROM records
+        WHERE type = 'task' AND org = ? AND at <= ? AND task_id IS NOT NULL
+        ORDER BY at DESC
     """, (org, at)).fetchall()
-    # Collapse multiple versions of the same task to the newest title/client row.
     by_id = {}
-    # Rows are newest-first. Keep the first snapshot for each task.
     for row in rows:
-        by_id.setdefault(row["task_id"], {
-            "id": row["task_id"], "title": row["title"] or "",
+        task_id = row["task_id"]
+        if task_id in by_id:
+            continue
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if not can_person_read(record, person, org, forgets=forgets):
+            continue
+        by_id[task_id] = {
+            "id": task_id,
+            "title": row["title"] or "",
             "client": row["client"]
-        })
+        }
     return list(by_id.values())
 
 
@@ -166,7 +172,7 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
     return out
 
 
-def _task_state(conn, task_id, at, person, org):
+def _task_state(conn, task_id, at, person, org, forgets=None):
     row = conn.execute("""
         SELECT id, raw_json FROM records
         WHERE type = 'task' AND task_id = ? AND org = ? AND at <= ?
@@ -178,7 +184,7 @@ def _task_state(conn, task_id, at, person, org):
         record = json.loads(row["raw_json"])
     except (TypeError, ValueError):
         return None
-    if not can_person_read(record, person, org):
+    if not can_person_read(record, person, org, forgets=forgets):
         return None
     return record, row["id"]
 
@@ -212,8 +218,10 @@ def answer_ask(person, at, ask, db_path=None):
                 "text": "I can't identify the workspace organization from the loaded people directory.",
                 "sources": []
             })
+        forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
+        forget_terms = [row["what"] for row in forget_rows if row["what"]]
         clients = _load_clients(conn)
-        tasks = _task_catalog(conn, at, org)
+        tasks = _task_catalog(conn, at, org, person, forgets=forget_terms)
         people = [{"id": p["id"], "name": p.get("name"), "role": p.get("role")}
                   for p in PEOPLE_BY_ID.values() if p.get("org") == org]
         interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks, people)
@@ -299,7 +307,7 @@ def answer_ask(person, at, ask, db_path=None):
             valid_task_ids = {t["id"] for t in tasks}
             if task_id not in valid_task_ids:
                 return _empty(usage, answer={"text": "I couldn't identify a matching task from the available records.", "sources": []})
-            state = _task_state(conn, task_id, at, person, org)
+            state = _task_state(conn, task_id, at, person, org, forgets=forget_terms)
             if not state:
                 return _empty(usage, answer={"text": "I have no accessible information about that task as of the requested time.", "sources": []})
             record, source_id = state
@@ -339,8 +347,6 @@ def answer_ask(person, at, ask, db_path=None):
             search_terms += " " + " ".join(
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
-        forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
-        forget_terms = [row["what"] for row in forget_rows if row["what"]]
         candidates = _visible_record_candidates(
             conn, person, org, at, search_terms, forgets=forget_terms
         )
