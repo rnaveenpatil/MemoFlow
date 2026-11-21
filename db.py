@@ -146,6 +146,10 @@ def init_db(reset=False, db_path=None):
         what TEXT
     );
     ''')
+    feedback_columns = {row["name"] for row in cur.execute("PRAGMA table_info(feedback)")}
+    if "available_day" not in feedback_columns:
+        cur.execute("ALTER TABLE feedback ADD COLUMN available_day INTEGER")
+        cur.execute("UPDATE feedback SET available_day = COALESCE(day, 0) + 1")
     # Migrate older databases so forget rules obey the same replay-day boundary.
     forget_columns = {row["name"] for row in cur.execute("PRAGMA table_info(forgets)")}
     if "day" not in forget_columns:
