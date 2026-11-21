@@ -462,9 +462,11 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                          AND (available_day IS NULL OR available_day <= ?)
                        ORDER BY created_at ASC""", (org, str(person), dataset_day)
                 ).fetchall()
+            blocked_update_terms = [str(term).casefold() for term in forget_terms if term]
             user_updates = [
                 {"id": row["id"], "text": row["text"], "created_at": row["created_at"]}
                 for row in update_rows
+                if not any(term in (row["text"] or "").casefold() for term in blocked_update_terms)
             ]
         tasks = []
         people = _load_people(conn, org, dataset_day=dataset_day, person=person, forgets=forget_terms)
