@@ -211,7 +211,11 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None, correc
         "user_corrections": corrections or [],
         "instructions": (
             "Interpret the user's meaning, not exact keywords. Map nicknames and abbreviations "
-            "to an available client only when evidence supports it. Select a task only when the "
+            "to an available client only when evidence supports it. Apply supplied user_corrections "
+            "when resolving this requester's own memory; they are scoped to this requester and "
+            "supersede only the specific corrected belief, not unrelated facts. Include the canonical "
+            "client ID and useful canonical client-name/topic terms in search_terms when resolving "
+            "an alias. Select a task only when the "
             "question identifies it sufficiently. Choose intent: task_lookup, record_lookup, "
             "privacy_request, or unknown. For task_lookup choose field owner, due, status, or summary. "
             "For record_lookup provide concise search_terms. For task_lookup, if one task fits, return its exact task_id. If two or more fit comparably, set needs_clarification true, return every plausible candidate_task_ids value, and ask one concise question naming the candidate titles. If none fit, do not select a task. Never omit candidate IDs when ambiguity is present. Do not guess. "
@@ -355,21 +359,20 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
 
 
 def _task_state(conn, task_id, at, person, org, forgets=None, dataset_day=None):
-    row = conn.execute("""
+    rows = conn.execute("""
         SELECT id, raw_json FROM records
         WHERE type = 'task' AND task_id = ? AND org = ? AND at <= ?
           AND (? IS NULL OR day <= ?)
-        ORDER BY at DESC LIMIT 1
-    """, (task_id, org, at, dataset_day, dataset_day)).fetchone()
-    if not row:
-        return None
-    try:
-        record = json.loads(row["raw_json"])
-    except (TypeError, ValueError):
-        return None
-    if not can_person_read(record, person, org, forgets=forgets):
-        return None
-    return record, row["id"]
+        ORDER BY at DESC
+    """, (task_id, org, at, dataset_day, dataset_day)).fetchall()
+    for row in rows:
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if can_person_read(record, person, org, forgets=forgets):
+            return record, row["id"]
+    return None
 
 
 def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
