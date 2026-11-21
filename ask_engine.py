@@ -541,11 +541,11 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                     "options": []
                 })
             forget_text = forget_text.strip()[:1000]
-            # Identity-free workspace chat cannot safely attribute this to one employee.
-            # Apply it as a workspace-wide retrieval suppression, retaining provenance.
+            # Scope a forget to the authenticated person; workspace mode has no identity.
+            forget_person = "*" if workspace_session else str(person)
             conn.execute(
                 "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
-                ("*", forget_text, dataset_day)
+                (forget_person, forget_text, dataset_day)
             )
             conn.commit()
             return _empty(usage, answer={
