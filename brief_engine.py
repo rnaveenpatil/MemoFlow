@@ -467,7 +467,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             first_promise = active_promises[0]
             q_to_ask = {
                 'text': f"Can we confirm delivery of {first_promise['what']} by {first_promise['due']}?",
-                'sources": first_promise['sources']
+                'sources': first_promise['sources']
             }
 
         ms = int((time.monotonic() - t0) * 1000)
