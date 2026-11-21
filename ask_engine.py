@@ -81,20 +81,24 @@ def _task_catalog(conn, at, org):
     return list(by_id.values())
 
 
-def _interpret(ask, at, person, clients, tasks):
+def _interpret(ask, at, person, clients, tasks, people):
     prompt = {
         "question": ask,
         "asked_at_utc": at,
         "asking_person": person,
         "available_clients": clients,
         "available_tasks": tasks,
+        "available_people": people,
         "instructions": (
             "Interpret the user's meaning, not exact keywords. Map nicknames and abbreviations "
             "to an available client only when evidence supports it. Select a task only when the "
             "question identifies it sufficiently. Choose intent: task_lookup, record_lookup, "
             "privacy_request, or unknown. For task_lookup choose field owner, due, status, or summary. "
             "For record_lookup provide concise search_terms. If multiple tasks are plausible, set "
-            "needs_clarification true and return candidate task IDs. Do not guess."
+            "needs_clarification true and return candidate task IDs. Do not guess. "
+            "Classify requests for another person's private personal information or private "
+            "conversations as privacy_request. Use available_people to resolve names to IDs "
+            "and distinguish people with the same first name."
         ),
         "required_json": {
             "intent": "task_lookup|record_lookup|privacy_request|unknown",
@@ -189,7 +193,9 @@ def answer_ask(person, at, ask, db_path=None):
         org = get_person_org(person)
         clients = _load_clients(conn)
         tasks = _task_catalog(conn, at, org)
-        interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks)
+        people = [{"id": p["id"], "name": p.get("name"), "role": p.get("role")}
+                  for p in PEOPLE_BY_ID.values() if p.get("org") == org]
+        interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks, people)
         usage = _usage(interpretation_call, started)
 
         if not interpretation:
