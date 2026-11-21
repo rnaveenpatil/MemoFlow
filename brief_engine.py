@@ -27,7 +27,7 @@ def get_person_name(pid):
 def _model_change_items(records, corrections, meeting, client):
     """Extract meaningful changes from already-authorized, time-bounded evidence."""
     if not records:
-        return []
+        return [], None
     prompt = {
         "meeting": meeting,
         "client_id": client,
@@ -48,13 +48,13 @@ def _model_change_items(records, corrections, meeting, client):
         "Never invent facts or source IDs. Output valid JSON only."
     ), max_tokens=700)
     if not result:
-        return []
+        return [], None
     raw = result.get("text", "").strip()
     raw = re.sub(r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", "", raw, flags=re.I)
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
-        return []
+        return [], result.get('usage')
     allowed = {r["id"] for r in records}
     items = []
     for item in parsed.get("changes", []) if isinstance(parsed, dict) else []:
@@ -73,7 +73,7 @@ def _model_change_items(records, corrections, meeting, client):
             "prio": max(1, min(priority, 3)),
             "is_blocker": bool(item.get("blocker", False))
         })
-    return items
+    return items, result.get('usage')
 
 
 def generate_briefs(person, date, db_path=None):
@@ -171,7 +171,8 @@ def generate_briefs(person, date, db_path=None):
                 'title': rec.get('title') or rec.get('subject') or '',
                 'body': (rec.get('body') or '')[:1400]
             })
-        changed_items.extend(_model_change_items(evidence, corrections, meet_id, client))
+        model_items, model_usage = _model_change_items(evidence, corrections, meet_id, client)
+        changed_items.extend(model_items)
 
         # (C) Check task changes
         cur.execute('''
@@ -290,7 +291,11 @@ def generate_briefs(person, date, db_path=None):
             }
 
         ms = int((time.monotonic() - t0) * 1000)
-        usage = compute_usage(json.dumps(final_changed), json.dumps(active_promises), ms)
+        usage = model_usage or {
+            'input_tokens': 0, 'output_tokens': 0, 'cost_usd': 0.0, 'ms': ms
+        }
+        usage = dict(usage)
+        usage['ms'] = ms
 
         briefs_output.append({
             'meeting_id': meet_id,
