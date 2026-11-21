@@ -21,7 +21,11 @@ def can_person_read(rec, person_id, person_org, forgets=None):
     if not person_org or rec.get("org") != person_org:
         return False
 
-    visibility = rec.get("visibility", "team")
+    # Fail closed: absent, malformed, or unknown visibility must never become team-readable.
+    visibility = rec.get("visibility")
+    if not isinstance(visibility, str):
+        return False
+    visibility = visibility.strip().casefold()
     if visibility == "private":
         if rec.get("author") != person_id:
             return False
@@ -31,8 +35,11 @@ def can_person_read(rec, person_id, person_org, forgets=None):
             try:
                 readers = json.loads(readers)
             except (TypeError, ValueError):
-                readers = [readers]
-        if person_id not in readers:
+                return False
+        # Malformed reader metadata must never grant access by substring/key matching.
+        if not isinstance(readers, list) or not all(isinstance(item, str) for item in readers):
+            return False
+        if str(person_id) not in readers:
             return False
     elif visibility != "team":
         return False

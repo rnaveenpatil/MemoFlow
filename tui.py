@@ -1,7 +1,8 @@
-"""Simple interactive terminal UI for MemoFlow.
+"""MemoFlow interactive terminal chat.
 
-The selected filename identifies the target dataset day. Import is cumulative:
-selecting Day N imports available days 1..N and never imports later days.
+All bundled day files are ingested into SQLite at startup. No desktop GUI or
+file picker is used. The workspace session is deliberately team-only because
+this CLI does not authenticate an individual employee.
 """
 import json
 import os
@@ -9,324 +10,278 @@ import re
 from datetime import datetime, timezone
 
 from MemoFlow.ask_engine import answer_ask
-from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID
-from MemoFlow.db import get_connection, init_db, insert_record
+from MemoFlow.config import DATA_DIR
+from MemoFlow.db import get_connection, init_db, insert_record, sync_workspace_metadata
 
-
-_DAY_RE = re.compile(r"(?:^|[^a-z0-9])day[-_ ]?0*(\d+)(?:[^0-9]|$)", re.I)
-
-
-def _select_jsonl_file():
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askopenfilename(
-            title="Select a MemoFlow day file",
-            filetypes=[("JSONL files", "*.jsonl"), ("All files", "*.*")],
-        )
-        root.destroy()
-        if path:
-            return path
-    except Exception:
-        pass
-    return input("Enter the path to a day-N .jsonl file: ").strip().strip('"')
-
-
-def _day_number(path):
-    """Infer the challenge day from the selected file name; never guess by selection order."""
-    match = _DAY_RE.search(os.path.basename(path))
-    if match:
-        return int(match.group(1))
-    raise ValueError(
-        "Cannot identify the dataset day from this filename. Rename it to include "
-        "'day-01', 'day-02', etc., then select it again."
-    )
-
-
-def _candidate_day_paths(selected_path, day):
-    filename = os.path.basename(selected_path)
-    match = _DAY_RE.search(filename)
-    if not match:
-        return []
-    prefix = filename[:match.start()]
-    suffix = filename[match.end():]
-    # Preserve common naming styles such as day-02.jsonl and Day 2.jsonl.
-    names = [
-        f"day-{day:02d}.jsonl",
-        f"day-{day}.jsonl",
-        f"Day {day}.jsonl",
-        f"Day-{day}.jsonl",
-        f"day_{day:02d}.jsonl",
-        f"{prefix}day-{day:02d}{suffix}",
-    ]
-    directories = [os.path.dirname(os.path.abspath(selected_path)),
-                   os.path.join(DATA_DIR, "days")]
-    seen = set()
-    for directory in directories:
-        for name in names:
-            candidate = os.path.abspath(os.path.join(directory, name))
-            if candidate not in seen and os.path.isfile(candidate):
-                seen.add(candidate)
-                yield candidate
+_DAY_RE = re.compile(r"day[-_ ]?0*(\d+)", re.I)
 
 
 def _load_jsonl(path):
-    records = []
-    with open(path, "r", encoding="utf-8-sig") as handle:
-        for line_number, line in enumerate(handle, 1):
-            line = line.strip()
-            if not line:
+    rows = []
+    with open(path, "r", encoding="utf-8-sig") as stream:
+        for line_no, line in enumerate(stream, 1):
+            if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                item = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"{os.path.basename(path)} line {line_number}: {exc}") from exc
-            if not isinstance(record, dict) or not record.get("id"):
-                raise ValueError(
-                    f"{os.path.basename(path)} line {line_number}: expected a JSON object with an id"
-                )
-            records.append(record)
-    return records
+                raise ValueError(f"{os.path.basename(path)} line {line_no}: {exc}") from exc
+            if not isinstance(item, dict) or not item.get("id") or not item.get("at"):
+                raise ValueError(f"{os.path.basename(path)} line {line_no}: each record needs id and at")
+            rows.append(item)
+    return rows
 
 
-def _ingest_feedback(conn, feedback_day):
-    feedback_path = os.path.join(DATA_DIR, "feedback", f"day-{feedback_day:02d}.jsonl")
-    if not os.path.isfile(feedback_path):
+def _day_from_name(name):
+    match = _DAY_RE.search(os.path.basename(name))
+    return int(match.group(1)) if match else None
+
+
+def _import_feedback(conn):
+    feedback_dir = os.path.join(DATA_DIR, "feedback")
+    if not os.path.isdir(feedback_dir):
         return 0
-    imported = 0
-    with open(feedback_path, "r", encoding="utf-8-sig") as handle:
-        for line_number, line in enumerate(handle, 1):
-            line = line.strip()
-            if not line:
-                continue
-            feedback = json.loads(line)
-            values = (
-                feedback.get("day"), feedback.get("person"), feedback.get("type"),
-                feedback.get("words"), feedback.get("meeting"), feedback.get("topic"),
-                feedback.get("verdict")
-            )
+    added = 0
+    for name in sorted(os.listdir(feedback_dir)):
+        if not name.lower().endswith(".jsonl") or _day_from_name(name) is None:
+            continue
+        feedback_path = os.path.join(feedback_dir, name)
+        with open(feedback_path, "r", encoding="utf-8-sig") as stream:
+            feedback_rows = []
+            for line_no, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    fb = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{name} line {line_no}: {exc}") from exc
+                if not isinstance(fb, dict):
+                    raise ValueError(f"{name} line {line_no}: feedback row must be a JSON object")
+                feedback_rows.append(fb)
+        for fb in feedback_rows:
+            feedback_day = _day_from_name(name)
+            available_day = feedback_day + 1
+            values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
+                      fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
             exists = conn.execute(
                 """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
-                   AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
-                values
+                   AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? AND available_day IS ? LIMIT 1""",
+                values + (available_day,)
             ).fetchone()
             if exists:
                 continue
             conn.execute(
-                """INSERT INTO feedback
-                   (day, person, type, words, meeting, topic, verdict)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""", values
+                """INSERT INTO feedback(day,person,type,words,meeting,topic,verdict,available_day)
+                   VALUES(?,?,?,?,?,?,?,?)""", values + (available_day,)
             )
-            if feedback.get("type") == "forget":
+            if str(fb.get("type", "")).casefold() == "forget" and fb.get("words"):
                 forget_exists = conn.execute(
                     "SELECT 1 FROM forgets WHERE person = ? AND what = ? LIMIT 1",
-                    (feedback.get("person"), feedback.get("words"))
+                    (fb.get("person") or "*", fb["words"])
                 ).fetchone()
                 if not forget_exists:
-                    conn.execute(
-                        "INSERT INTO forgets (person, what) VALUES (?, ?)",
-                        (feedback.get("person"), feedback.get("words"))
-                    )
-            imported += 1
-    return imported
+                    conn.execute("INSERT INTO forgets(person,what,day) VALUES(?,?,?)",
+                                 (fb.get("person") or "*", fb["words"], available_day))
+            added += 1
+    return added
 
 
-def _ingest_cumulative(selected_path):
-    if not selected_path or not os.path.isfile(selected_path):
-        print("File not found. Select a valid JSONL file.")
-        return False
+def bootstrap_dataset():
+    """Import every bundled day file into SQLite, without duplicating record IDs."""
+    days_dir = os.path.join(DATA_DIR, "days")
+    if not os.path.isdir(days_dir):
+        raise FileNotFoundError(f"Dataset folder not found: {days_dir}")
+    day_files = {}
+    for name in os.listdir(days_dir):
+        day = _day_from_name(name)
+        path = os.path.join(days_dir, name)
+        if day is not None and name.lower().endswith(".jsonl") and os.path.isfile(path):
+            day_files[day] = path
+    if not day_files:
+        raise FileNotFoundError(f"No day-XX.jsonl files found in {days_dir}")
+
+    init_db(reset=False)
+    conn = get_connection()
+    try:
+        sync_workspace_metadata(conn, data_dir=DATA_DIR)
+        added = 0
+        for day, path in sorted(day_files.items()):
+            for record in _load_jsonl(path):
+                if conn.execute("SELECT 1 FROM records WHERE id = ?", (record["id"],)).fetchone():
+                    continue
+                insert_record(conn, record, day)
+                added += 1
+        feedback_added = _import_feedback(conn)
+        conn.commit()
+        orgs = [row["org"] for row in conn.execute(
+            "SELECT DISTINCT org FROM people WHERE org IS NOT NULL ORDER BY org"
+        ).fetchall()]
+        total = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+        days = [row["day"] for row in conn.execute(
+            "SELECT DISTINCT day FROM records WHERE day IS NOT NULL ORDER BY day"
+        ).fetchall()]
+        return {"orgs": orgs, "added": added, "feedback_added": feedback_added,
+                "total": total, "days": days, "files": len(day_files),
+                "latest_day": max(day_files)}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _cutoff_for_day(day):
+    # Every selected day is cumulative. Never remove the day boundary for hidden days.
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT MAX(at) AS cutoff FROM records WHERE day <= ?", (day,)
+        ).fetchone()
+        return row["cutoff"] if row and row["cutoff"] else None
+    finally:
+        conn.close()
+
+
+def _choose_workspace(orgs):
+    if not orgs:
+        raise RuntimeError("No workspace organization was found in dataset/data/people.json.")
+    if len(orgs) == 1:
+        return orgs[0]
+    print("\nAvailable workspaces:")
+    for index, org in enumerate(orgs, 1):
+        print(f"  {index}. {org}")
+    while True:
+        value = input("Select workspace number: ").strip()
+        try:
+            selected = int(value)
+            if 1 <= selected <= len(orgs):
+                return orgs[selected - 1]
+        except ValueError:
+            pass
+        print("Enter one of the listed numbers.")
+
+
+def _choose_day(default_day):
+    while True:
+        value = input(f"Dataset day [1–15, default {default_day}]: ").strip()
+        if not value:
+            return default_day
+        try:
+            day = int(value)
+            if 1 <= day <= 15:
+                return day
+        except ValueError:
+            pass
+        print("Enter a day from 1 to 15.")
+
+
+def _show_result(result):
+    if result.get("refused"):
+        print(f"\nMemoFlow: {result['refused'].get('reason', 'Access denied.')}")
+    elif result.get("clarify"):
+        clarification = result["clarify"]
+        print(f"\nMemoFlow: {clarification.get('question', 'Please clarify.')}")
+        for option in clarification.get("options") or []:
+            print(f"  - {option.get('text', '')}")
+    elif result.get("answer"):
+        answer = result["answer"]
+        print(f"\nMemoFlow: {answer.get('text', 'No answer.')}")
+        sources = answer.get("sources") or []
+        if sources:
+            print("Sources: " + ", ".join(sources))
+    else:
+        print("\nMemoFlow: I couldn't find a reliable answer in the authorized records.")
+    usage = result.get("usage") or {}
+    if usage:
+        print(f"[{usage.get('ms', 0)} ms | {usage.get('input_tokens', 0)} in / "
+              f"{usage.get('output_tokens', 0)} out tokens | "
+              f"${usage.get('cost_usd', 0):.6f}]")
+    print()
+
+
+def _print_scope(day, cutoff):
+    print(f"Scope: cumulative Days 1–{day}; hard day boundary enforced (timestamp cutoff: {cutoff or 'no records'}).")
+
+
+def run_tui():
+    print("\nMemoFlow — Workspace Memory Assistant")
+    print("Starting local SQLite database and importing bundled dataset…")
+    try:
+        info = bootstrap_dataset()
+    except Exception as exc:
+        print(f"Dataset initialization failed: {exc}")
+        return
+
+    print(f"SQLite ready: {info['total']:,} records | {info['files']} day files | "
+          f"{info['added']} newly imported | {info['feedback_added']} feedback rows imported")
+    print("Available day files: " + (", ".join(map(str, info["days"])) or "none"))
+    print("Security mode: workspace session; team-visible records only. "
+          "Private/restricted records require verified employee identity and are blocked here.")
 
     try:
-        target_day = _day_number(selected_path)
-        if target_day < 1:
-            raise ValueError("Dataset day must be at least 1.")
+        org = _choose_workspace(info["orgs"])
+        day = _choose_day(min(15, max(info["days"]) if info["days"] else 5))
+    except (EOFError, KeyboardInterrupt):
+        print("\nExited.")
+        return
 
-        paths_by_day = {}
-        for day in range(1, target_day + 1):
-            matches = list(_candidate_day_paths(selected_path, day))
-            if day == target_day:
-                selected = os.path.abspath(selected_path)
-                if selected not in matches:
-                    matches.insert(0, selected)
-            if matches:
-                paths_by_day[day] = matches[0]
+    person = "__workspace__:" + org
+    cutoff = _cutoff_for_day(day)
+    print(f"\nWorkspace: {org}")
+    _print_scope(day, cutoff)
+    print("Type a question and press Enter. Commands: /day N, /refresh, /help, /exit")
+    print("Note: workspace chat is not employee authentication; private/restricted content stays inaccessible.\n")
 
-        # Earlier days may already be present in the persistent database.
-        init_db(reset=False)
-        conn = get_connection()
-        try:
-            existing_days = {
-                row["day"] for row in conn.execute(
-                    "SELECT DISTINCT day FROM records WHERE day IS NOT NULL"
-                ).fetchall()
-            }
-            missing = [
-                day for day in range(1, target_day + 1)
-                if day not in paths_by_day and day not in existing_days
-            ]
-            if missing:
-                raise ValueError(
-                    "Cannot build cumulative history. Missing earlier day file(s): "
-                    + ", ".join(str(day) for day in missing)
-                    + ". Keep day-01.jsonl through the selected day in the same folder "
-                    "or in the configured dataset/data/days folder."
-                )
-
-            imported = {}
-            imported_feedback = 0
-            for day in range(1, target_day + 1):
-                path = paths_by_day.get(day)
-                if not path:
-                    imported[day] = 0
-                    continue
-                records = _load_jsonl(path)
-                added = 0
-                for record in records:
-                    # Avoid replaying derived task-change/promise history on repeated imports.
-                    exists = conn.execute(
-                        "SELECT 1 FROM records WHERE id = ?", (record["id"],)
-                    ).fetchone()
-                    if exists:
-                        continue
-                    insert_record(conn, record, day)
-                    added += 1
-                imported[day] = added
-                if day > 1:
-                    imported_feedback += _ingest_feedback(conn, day - 1)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
-        total = sum(imported.values())
-        summary = ", ".join(f"Day {day}: +{count}" for day, count in imported.items())
-        print(f"\nCumulative import complete through Day {target_day}.")
-        print(summary)
-        print(f"New records imported: {total}")
-        print(f"New feedback entries imported: {imported_feedback}")
-        print("No future-day files were read.")
-        return True
-    except (OSError, ValueError) as exc:
-        print(f"Import failed: {exc}")
-        return False
-
-
-def _resolve_workspace_person(name):
-    """Resolve a human-entered workspace name; never ask users for internal IDs."""
-    query = " ".join((name or "").casefold().split())
-    if not query:
-        return None, []
-
-    exact = [
-        (pid, person) for pid, person in PEOPLE_BY_ID.items()
-        if " ".join(person.get("name", "").casefold().split()) == query
-    ]
-    if len(exact) == 1:
-        return exact[0][0], []
-    if len(exact) > 1:
-        return None, exact
-
-    # Permit a unique full-name/partial-name match, but never guess between people.
-    matches = [
-        (pid, person) for pid, person in PEOPLE_BY_ID.items()
-        if query in " ".join(person.get("name", "").casefold().split())
-    ]
-    if len(matches) == 1:
-        return matches[0][0], []
-    return None, matches
-
-
-def _choose_workspace_person():
-    if not PEOPLE_BY_ID:
-        raise RuntimeError("No people.json was found. MemoFlow cannot safely establish workspace visibility.")
-    while True:
-        name = input("\nMemoFlow: What's your name in this workspace? ").strip()
-        person_id, matches = _resolve_workspace_person(name)
-        if person_id:
-            person = PEOPLE_BY_ID[person_id]
-            print(f"MemoFlow: Hi {person.get('name', name)}. Your workspace access is ready.")
-            return person_id
-        if matches:
-            print("MemoFlow: I found more than one possible match. Enter the full name:")
-            for _, person in matches:
-                print(f"  - {person.get('name')} ({person.get('role', 'role not listed')})")
-        else:
-            print("MemoFlow: I couldn't match that name to this workspace. Try the name shown in the people directory.")
-
-def _ask_loop(person):
-    print("\nMemoFlow is ready. Chat naturally. Use /file to add more data, /whoami to see your session, or /exit to quit.")
     while True:
         try:
-            question = input("\nYou: ").strip()
+            question = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\nExiting MemoFlow.")
-            return
-
+            print("\nExited.")
+            break
         if not question:
             continue
         command = question.casefold()
-        if command in {"/exit", "exit", "quit"}:
-            return
-        if command == "/whoami":
-            print(f"MemoFlow: You are signed in as {PEOPLE_BY_ID.get(person, {}).get('name', 'Unknown')}.")
+        if command in {"/exit", "/quit"}:
+            print("Goodbye.")
+            break
+        if command == "/help":
+            print("Ask any question about accessible workspace records.")
+            print("/day N   Change dataset scope (cumulative Days 1–N; later days are excluded)")
+            print("/refresh Re-import newly added day/feedback files into SQLite")
+            print("/exit   Quit MemoFlow\n")
             continue
-        if command == "/file":
-            return "select_file"
+        if command.startswith("/day "):
+            try:
+                new_day = int(question.split(maxsplit=1)[1])
+                if not 1 <= new_day <= 15:
+                    raise ValueError
+                day = new_day
+                cutoff = _cutoff_for_day(day)
+                _print_scope(day, cutoff)
+            except (ValueError, IndexError):
+                print("Use /day followed by a number from 1 to 15.\n")
+            continue
+        if command == "/refresh":
+            try:
+                info = bootstrap_dataset()
+                cutoff = _cutoff_for_day(day)
+                print(f"Refreshed: {info['total']:,} records total; "
+                      f"{info['added']} new records imported.")
+                if org not in info["orgs"]:
+                    print("Warning: selected workspace is no longer in the people directory.")
+                _print_scope(day, cutoff)
+            except Exception as exc:
+                print(f"Refresh failed: {exc}")
+            print()
+            continue
 
-        asked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            result = answer_ask(person, asked_at, question)
+            result = answer_ask(person, now, question, dataset_cutoff=cutoff, dataset_day=day)
+            _show_result(result)
         except Exception as exc:
-            print(f"MemoFlow error: {exc}")
-            continue
+            print(f"Request failed: {exc}\n")
 
-        if result.get("refused"):
-            print(f"MemoFlow: I can't provide that: {result['refused'].get('reason', 'Not authorized.')}")
-        elif result.get("clarify"):
-            clarification = result["clarify"]
-            print(f"MemoFlow: {clarification.get('question', 'Can you clarify?')}")
-            for option in clarification.get("options", []):
-                print(f"  - {option.get('text', option.get('id', 'Option'))}")
-        elif result.get("answer"):
-            print(f"MemoFlow: {result['answer'].get('text', 'No answer returned.')}")
-            sources = result["answer"].get("sources") or []
-            if sources:
-                print("Sources: " + ", ".join(sources))
-        else:
-            print("MemoFlow: I couldn't find a reliable answer in the records available to your account.")
 
-def run_tui():
-    init_db(reset=False)
-    print("=" * 48)
-    print("                 MEMOFLOW")
-    print("       Your workspace memory assistant")
-    print("=" * 48)
-    print("MemoFlow uses the selected dataset as its workspace memory.")
-    print("Select a day file to load its history, or start with data already in the database.")
-
-    person = _choose_workspace_person()
-    while True:
-        path = _select_jsonl_file()
-        if not path:
-            print("No file selected. You can select one later with /file.")
-        else:
-            _ingest_cumulative(path)
-        break
-
-    while True:
-        result = _ask_loop(person)
-        if result == "select_file":
-            path = _select_jsonl_file()
-            if path:
-                _ingest_cumulative(path)
-            else:
-                print("No file selected.")
-            continue
-        print("Goodbye.")
-        return
+if __name__ == "__main__":
+    run_tui()

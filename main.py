@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from MemoFlow.config import DATA_DIR
-from MemoFlow.db import init_db, get_connection, insert_record
+from MemoFlow.db import init_db, get_connection, insert_record, sync_workspace_metadata
 from MemoFlow.brief_engine import generate_briefs
 from MemoFlow.ask_engine import answer_ask
 
@@ -31,8 +31,9 @@ def _ingest_feedback(conn, feedback_day):
         return 0
     count = 0
     for fb in _read_jsonl(path):
-        values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
+        values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
                   fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
+        available_day = feedback_day + 1
         exists = conn.execute(
             """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
                AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
@@ -42,8 +43,8 @@ def _ingest_feedback(conn, feedback_day):
             continue
         conn.execute(
             """INSERT INTO feedback
-            (day, person, type, words, meeting, topic, verdict)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""", values
+            (day, person, type, words, meeting, topic, verdict, available_day)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", values + (available_day,)
         )
         if fb.get("type") == "forget":
             forget_exists = conn.execute(
@@ -52,8 +53,8 @@ def _ingest_feedback(conn, feedback_day):
             ).fetchone()
             if not forget_exists:
                 conn.execute(
-                    "INSERT INTO forgets (person, what) VALUES (?, ?)",
-                    (fb.get("person"), fb.get("words"))
+                    "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
+                    (fb.get("person"), fb.get("words"), available_day)
                 )
         count += 1
     return count
@@ -62,8 +63,9 @@ def _ingest_feedback(conn, feedback_day):
 def handle_ingest(day):
     if day < 1:
         raise ValueError("Day must be a positive integer.")
-    init_db(reset=(day == 1))
+    init_db(reset=False)
     conn = get_connection()
+    sync_workspace_metadata(conn)
     imported = {}
     feedback_count = 0
     try:
@@ -78,6 +80,24 @@ def handle_ingest(day):
                 "Cannot ingest cumulatively; missing day file(s): "
                 + ", ".join(str(d) for d in missing)
             )
+
+        # Replaying an earlier day must not inherit future rows from a previous run.
+        future_ids = [row["id"] for row in conn.execute(
+            "SELECT id FROM records WHERE day > ?", (day,)
+        ).fetchall()]
+        if future_ids:
+            conn.executemany("DELETE FROM records_fts WHERE id = ?", [(rid,) for rid in future_ids])
+        conn.execute("DELETE FROM records WHERE day > ?", (day,))
+        conn.execute("DELETE FROM task_changes WHERE day > ?", (day,))
+        conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
+        conn.execute("DELETE FROM feedback WHERE available_day > ?", (day,))
+        conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
+        conn.execute("DELETE FROM promises WHERE available_day > ?", (day,))
+        conn.execute(
+            "UPDATE promises SET fulfilled = 0, fulfilled_day = NULL, fulfilled_at = NULL "
+            "WHERE fulfilled_day > ?", (day,)
+        )
+        conn.execute("DELETE FROM tasks WHERE last_day > ?", (day,))
 
         for current_day in range(1, day + 1):
             path = os.path.join(day_dir, f"day-{current_day:02d}.jsonl")
@@ -119,7 +139,8 @@ def handle_ask(person, at, ask):
 def handle_forget(person, what):
     init_db(reset=False)
     conn = get_connection()
-    conn.execute("INSERT INTO forgets (person, what) VALUES (?, ?)", (person, what))
+    current_day = conn.execute("SELECT MAX(day) AS day FROM records").fetchone()["day"]
+    conn.execute("INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)", (person, what, current_day))
     conn.commit()
     conn.close()
     print(json.dumps({"ok": True}))
@@ -127,7 +148,7 @@ def handle_forget(person, what):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="MemoFlow: workspace memory assistant. Run without a command to open the interactive UI."
+        description="MemoFlow: workspace memory assistant. Run without a command to open the interactive terminal chat."
     )
     sub = ap.add_subparsers(dest="cmd")
 
@@ -147,7 +168,7 @@ def main():
     s.add_argument("--person", required=True)
     s.add_argument("--what", required=True)
 
-    sub.add_parser("tui", help="Open the interactive file-and-question UI")
+    sub.add_parser("tui", help="Open the interactive terminal chat")
 
     args = ap.parse_args()
 

@@ -1,27 +1,36 @@
-# MemoFlow: Autonomous Meeting Brief & Context Assistant
+# MemoFlow: Workspace Memory & Context Assistant
 
 MemoFlow is a lightweight, high-performance meeting assistant built with **Python + SQLite (with FTS5 full-text search)**. It processes workspace communication records, tracks task and document states across days, generates client meeting briefs, and answers ad-hoc questions with privacy boundaries and source citations.
 
-## Quick start: chat-first mode
+## Quick start: terminal chat
 
-Run from the MemoFlow project directory:
+Run:
 
 ```bash
 python main.py
 ```
 
-MemoFlow opens as a normal chat assistant:
+The terminal assistant automatically discovers the bundled dataset, imports all available day files into SQLite, and opens an interactive chat. No file picker or manual ingestion is required. Select a workspace and dataset day when prompted, then type questions directly at `You:`. Keep chatting until `/exit`.
 
-1. Enter your workspace name once. You do not need to know or type an internal person ID. This identity step is required so MemoFlow can enforce private and restricted visibility correctly.
-2. Select a JSONL day file. MemoFlow detects the day from its filename and imports the available history from Day 1 through that day into its persistent SQLite database. It never scans or imports future days.
-3. Start typing natural-language questions directly. Mention people by name; MemoFlow asks the language model to resolve names against `people.json`, validates the returned IDs against that directory, and uses the resolved identity for retrieval.
-4. Use `/file` to select and ingest another day file, `/whoami` to see the active workspace identity, or `/exit` to quit.
+Commands inside chat: `/day N` changes the dataset scope, `/refresh` imports newly added files, and `/help` lists commands.
 
-If two people have the same name, MemoFlow asks you to disambiguate instead of guessing. Internal IDs are used by the application and database, not required from the user.
+### Dataset-day behavior
 
-Keep earlier day files together in the selected file's folder, or place them under `data/days/`. Filenames must contain a day marker such as `day-01.jsonl`, `day-2.jsonl`, or `Day 3.jsonl`. Missing earlier days cause a clear error rather than silently creating incomplete history. Re-importing an existing record ID is skipped to avoid duplicate history.
+- On startup, **all day files present in the bundled dataset folder are ingested into SQLite**. Existing record IDs are not imported twice.
+- **Day 1–15:** the query engine uses cumulative records from Day 1 through the selected day, inclusive. Both the day column and the selected day's latest timestamp are enforced; later-day records cannot influence answers even when already ingested. Missing hidden-day files are not fabricated. Use `/refresh` after adding files.
+- Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
+- Feedback rows are ingested, but person-specific preferences and correction/verdict feedback are not yet applied to question-answering. The current workspace-only session cannot safely decide which employee's preferences should govern a response.
+- The selected dataset day is separate from dates mentioned in questions. The LLM interprets natural-language date intent; Python enforces the SQL time boundary.
 
-**Data and privacy:** selected dataset records are stored in the local SQLite database. The database is shared workspace storage, not a separate copy per person. Every query is filtered by organization, visibility (`team`, `private`, `restricted`), as-of time, and forget rules before evidence is sent to the LLM. Mentioning another person's name never grants access to their private records.
+### Privacy and identity
+
+The terminal session does not authenticate an individual employee. It can read **team-visible** records only; private and restricted records are denied. Do not treat selecting a workspace or mentioning an employee name as identity verification. Private/restricted access requires a verified member login. Organization, visibility, and forget filters are applied before records reach the LLM. Client metadata and dataset time hints are also restricted to readable records.
+
+**Deployment limitation:** the SQLite database is local and is not encrypted by this application. Anyone who can read the database file or run code as the same OS user can bypass the chat-layer filters. Do not deploy this terminal mode as a multi-user security boundary on a shared machine.
+
+### Chat behavior
+
+Ask about people, clients, tasks, meetings, decisions, and changes in natural language. The LLM interprets the request and synthesizes only retrieved records. Every answer must cite source record IDs. Explicit “remember” or “correct” instructions are saved as clearly labelled user-provided notes; explicit forget requests create retrieval-suppression rules. Forget is not represented as physical deletion of the original source file.
 
 
 ## Architecture & Tech Stack
