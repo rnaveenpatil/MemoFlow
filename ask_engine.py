@@ -114,7 +114,8 @@ def _interpret(ask, at, person, clients, tasks, people):
             "clarification": "question or null",
             "candidate_task_ids": [],
             "resolved_people": [{"id": "known person ID", "name": "known full name"}],
-            "update_text": "exact user-provided update or null"
+            "update_text": "exact user-provided update or null",
+            "forget_text": "specific subject to forget or null"
         }
     }
     result = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=450)
@@ -123,7 +124,7 @@ def _interpret(ask, at, person, clients, tasks, people):
     return _json_from_model(result.get("text")), result
 
 
-def _visible_record_candidates(conn, person, org, at, search_terms, limit=12):
+def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None):
     tokens = re.findall(r"[\w-]{3,}", (search_terms or "").lower())
     tokens = list(dict.fromkeys(tokens))[:12]
     if not tokens:
@@ -148,7 +149,7 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12):
             record = json.loads(row["raw_json"])
         except (TypeError, ValueError):
             continue
-        if can_person_read(record, person, org):
+        if can_person_read(record, person, org, forgets=forgets):
             # Keep only fields needed to answer and cite.
             out.append({
                 "id": record.get("id"),
@@ -238,6 +239,25 @@ def answer_ask(person, at, ask, db_path=None):
                 })
 
         intent = interpretation.get("intent")
+        if intent == "forget_request":
+            forget_text = interpretation.get("forget_text")
+            if not isinstance(forget_text, str) or len(forget_text.strip()) < 2:
+                return _empty(usage, clarify={
+                    "question": "What specific information should I stop using?",
+                    "options": []
+                })
+            forget_text = forget_text.strip()[:1000]
+            # Identity-free workspace chat cannot safely attribute this to one employee.
+            # Apply it as a workspace-wide retrieval suppression, retaining provenance.
+            conn.execute(
+                "INSERT INTO forgets (person, what) VALUES (?, ?)",
+                ("*", forget_text)
+            )
+            conn.commit()
+            return _empty(usage, answer={
+                "text": "I'll exclude that information from future MemoFlow retrieval. The original imported JSONL file and database record are retained; this is a retrieval-level forget rule, not physical deletion.",
+                "sources": []
+            })
         if intent == "workspace_update":
             update_text = interpretation.get("update_text")
             if not isinstance(update_text, str) or len(update_text.strip()) < 3:
@@ -319,7 +339,11 @@ def answer_ask(person, at, ask, db_path=None):
             search_terms += " " + " ".join(
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
-        candidates = _visible_record_candidates(conn, person, org, at, search_terms)
+        forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
+        forget_terms = [row["what"] for row in forget_rows if row["what"]]
+        candidates = _visible_record_candidates(
+            conn, person, org, at, search_terms, forgets=forget_terms
+        )
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
 
