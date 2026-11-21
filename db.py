@@ -160,9 +160,13 @@ def init_db(reset=False, db_path=None):
         due TEXT,
         day INTEGER,
         at TEXT,
-        fulfilled INTEGER DEFAULT 0
+        fulfilled INTEGER DEFAULT 0,
+        fulfilled_day INTEGER
     );
     ''')
+    promise_columns = {row["name"] for row in cur.execute("PRAGMA table_info(promises)")}
+    if "fulfilled_day" not in promise_columns:
+        cur.execute("ALTER TABLE promises ADD COLUMN fulfilled_day INTEGER")
 
     conn.commit()
     conn.close()
@@ -459,4 +463,4 @@ def insert_record(conn, r, day):
         for prom in cur.fetchall():
             what_kw = prom['what'].replace('the ', '').strip().lower()
             if what_kw in body.lower():
-                cur.execute('UPDATE promises SET fulfilled = 1 WHERE record_id = ?', (prom['record_id'],))
+                cur.execute('UPDATE promises SET fulfilled = 1, fulfilled_day = ? WHERE record_id = ?', (day, prom['record_id']))
