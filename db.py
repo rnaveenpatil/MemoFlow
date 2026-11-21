@@ -182,7 +182,8 @@ def init_db(reset=False, db_path=None):
         at TEXT,
         fulfilled INTEGER DEFAULT 0,
         fulfilled_day INTEGER,
-        fulfilled_at TEXT
+        fulfilled_at TEXT,
+        available_day INTEGER
     );
     ''')
     promise_columns = {row["name"] for row in cur.execute("PRAGMA table_info(promises)")}
@@ -190,6 +191,9 @@ def init_db(reset=False, db_path=None):
         cur.execute("ALTER TABLE promises ADD COLUMN fulfilled_day INTEGER")
     if "fulfilled_at" not in promise_columns:
         cur.execute("ALTER TABLE promises ADD COLUMN fulfilled_at TEXT")
+    if "available_day" not in promise_columns:
+        cur.execute("ALTER TABLE promises ADD COLUMN available_day INTEGER")
+        cur.execute("UPDATE promises SET available_day = COALESCE(day, 0)")
 
     conn.commit()
     conn.close()
