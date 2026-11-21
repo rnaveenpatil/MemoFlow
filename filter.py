@@ -1,6 +1,19 @@
 """Metadata and permission filtering for MemoFlow."""
 import json, re
 
+def _forget_terms(forgets):
+    """Extract the subject of a natural-language forget request."""
+    terms = []
+    for value in forgets or []:
+        text = (value or "").strip()
+        text = re.sub(r"^forget\\s+(?:what\\s+i\\s+said\\s+about\\s+)?", "", text, flags=re.I)
+        text = re.sub(r"^please\\s+forget\\s+", "", text, flags=re.I)
+        text = text.strip(" .!?\\\"'")
+        if text:
+            terms.append(text.casefold())
+    return terms
+
+
 def can_person_read(rec, person_id, person_org, forgets=None):
     """Strict privacy and permission filter:
     1. Organization check (never leak rival org_bw).
@@ -36,8 +49,8 @@ def can_person_read(rec, person_id, person_org, forgets=None):
     # 3. Forget filter
     if forgets:
         text = ((rec.get('body') or '') + ' ' + (rec.get('title') or '') + ' ' + (rec.get('subject') or '')).lower()
-        for f in forgets:
-            if f.lower() in text:
+        for phrase in _forget_terms(forgets):
+            if phrase in text:
                 return False
 
     return True
