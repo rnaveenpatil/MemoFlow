@@ -28,7 +28,7 @@ def _system_prompt():
     guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.md")
     try:
         with open(guide_path, encoding="utf-8") as handle:
-            guide = handle.read(12000)
+            guide = handle.read(3000)
     except OSError:
         guide = ""
     return SYSTEM + ("\\n\\nRepository operating guidance (secondary to enforced code rules):\\n" + guide if guide else "")
@@ -88,8 +88,21 @@ def _load_clients(conn, org, person, forgets=None, dataset_day=None):
             for client_id in sorted(visible_ids)]
 
 
-def _load_people(conn, org=None):
+def _load_people(conn, org=None, dataset_day=None):
+    """Expose only identities evidenced by records available in this replay day."""
     try:
+        allowed = set()
+        if dataset_day is not None:
+            rows = conn.execute(
+                """SELECT author, owner FROM records
+                   WHERE (? IS NULL OR day <= ?) AND (? IS NULL OR org = ?)""",
+                (dataset_day, dataset_day, org, org)
+            ).fetchall()
+            for row in rows:
+                if row["author"]:
+                    allowed.add(str(row["author"]))
+                if row["owner"]:
+                    allowed.add(str(row["owner"]))
         if org is None:
             rows = conn.execute(
                 "SELECT person_id, org, name, role FROM people ORDER BY name"
@@ -104,12 +117,22 @@ def _load_people(conn, org=None):
                 {"id": row["person_id"], "org": row["org"],
                  "name": row["name"], "role": row["role"]}
                 for row in rows
+                if dataset_day is None or row["person_id"] in allowed
             ]
     except Exception:
         pass
     values = list(PEOPLE_BY_ID.values())
     if org is not None:
         values = [person for person in values if person.get("org") == org]
+    if dataset_day is not None:
+        try:
+            allowed = {str(v) for row in conn.execute(
+                "SELECT author, owner FROM records WHERE day <= ? AND (? IS NULL OR org = ?)",
+                (dataset_day, org, org)
+            ).fetchall() for v in (row["author"], row["owner"]) if v}
+            values = [p for p in values if str(p["id"]) in allowed]
+        except Exception:
+            values = []
     return [
         {"id": person["id"], "org": person.get("org"),
          "name": person.get("name"), "role": person.get("role")}
@@ -326,7 +349,22 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
             })
         if len(out) >= limit:
             break
-    return out
+    # Hard cap serialized evidence to stay within the question token budget.
+    bounded, used = [], 0
+    for item in out:
+        remaining = 12000 - used
+        if remaining <= 0:
+            break
+        body = item.get("body") or ""
+        if len(body) > remaining:
+            item = dict(item)
+            item["body"] = body[:remaining]
+        cost = len(json.dumps(item, ensure_ascii=False))
+        if cost > remaining:
+            continue
+        bounded.append(item)
+        used += cost
+    return bounded
 
 
 def _task_state(conn, task_id, at, person, org, forgets=None, dataset_day=None):
@@ -385,9 +423,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 "SELECT what FROM forgets WHERE person IN (?, '*') AND (day IS NULL OR day <= ?)", (str(person), dataset_day)
             ).fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
-        clients = _load_clients(conn, org, person, forgets=forget_terms)
         tasks = []
-        people = _load_people(conn, org)
+        people = _load_people(conn, org, dataset_day=dataset_day)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
         if dataset_day is not None and not 1 <= dataset_day <= 15:
             return _empty(_usage(None, started), answer={"text": "Dataset day must be between 1 and 15.", "sources": []})
