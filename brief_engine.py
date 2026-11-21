@@ -30,14 +30,42 @@ def format_date_friendly(dt_str):
     except Exception:
         return str(dt_str)
 
-def get_person_name(pid):
+def get_person_name(pid, visible_names=None):
+    if visible_names and pid in visible_names:
+        return visible_names[pid]
     p = PEOPLE_BY_ID.get(pid)
     if p:
         return p.get('name', pid)
     return pid
 
 
-def _model_change_items(records, corrections, meeting, client, meeting_start=None, open_promises=None, verdicts=None):
+def _visible_people_names(conn, person, org, dataset_day=None, forgets=None):
+    """Resolve names only for people referenced by records this requester may read."""
+    visible_ids = {str(person)}
+    rows = conn.execute(
+        """SELECT author, owner, raw_json FROM records
+           WHERE org = ? AND (? IS NULL OR day <= ?)""",
+        (org, dataset_day, dataset_day)
+    ).fetchall()
+    for row in rows:
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if not can_person_read(record, person, org, forgets=forgets):
+            continue
+        visible_ids.update(str(value) for value in (row["author"], row["owner"]) if value)
+    names = {}
+    for row in conn.execute(
+        "SELECT person_id, name FROM people WHERE org = ?", (org,)
+    ).fetchall():
+        if str(row["person_id"]) in visible_ids:
+            names[str(row["person_id"])] = row["name"]
+    return names
+
+
+def _model_change_items(records, corrections, meeting, client, meeting_start=None,
+                        open_promises=None, verdicts=None, preferences=None):
     """Extract meaningful changes and natural-language promises from authorized evidence."""
     if not records:
         return [], [], [], None
@@ -48,8 +76,13 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
         "open_promises": open_promises or [],
         "corrections": [dict(words=r["words"], meeting=r["meeting"]) for r in corrections],
         "prior_verdicts": verdicts or [],
+        "user_preferences": preferences or [],
         "instructions": (
             "Identify material changes since the previous meeting for this client. "
+            "Apply only corrections relevant to this meeting/client; never let unrelated "
+            "corrections change the brief. Use prior kept/ignored verdicts only as feedback "
+            "about what this person finds useful, not as factual evidence. Respect user preferences "
+            "for style and prioritization, but never let preferences override facts or permissions. "
             "Include decisions, ownership changes, launch/date changes, blockers and deliveries. "
             "Prefer explicit corrections over older claims. For conflicting ownership claims, "
             "prefer an explicit manager statement over an intern statement; at equal authority prefer "
@@ -183,6 +216,9 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
          "topic": row["topic"], "verdict": row["verdict"]}
         for row in cur.fetchall()
     ]
+    visible_people_names = _visible_people_names(
+        conn, person, person_org, dataset_day=dataset_day, forgets=forgets
+    )
 
     # 2. Find meetings for this person on date
     cur.execute('''
@@ -314,7 +350,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                     break
         model_items, model_promises, fulfilled_promises, model_usage = _model_change_items(
             evidence, corrections, meet_id, client, meeting_start=meet.get('start'),
-            open_promises=open_promises, verdicts=verdicts
+            open_promises=open_promises, verdicts=verdicts, preferences=prefs
         )
         changed_items.extend(model_items)
         # Persist model-extracted commitments with their original record provenance.
@@ -322,11 +358,23 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         for promise in model_promises:
             source = evidence_by_id[promise["sources"][0]]
             cur.execute(
-                """INSERT OR IGNORE INTO promises
-                   (record_id, client, owner, what, due, day, at, fulfilled, fulfilled_day, available_day)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)""",
+                """INSERT INTO promises
+                   (record_id, client, owner, what, due, day, at, fulfilled,
+                    fulfilled_day, fulfilled_at, available_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)
+                   ON CONFLICT(record_id) DO UPDATE SET
+                     client = excluded.client,
+                     owner = excluded.owner,
+                     what = excluded.what,
+                     due = excluded.due,
+                     day = excluded.day,
+                     at = excluded.at,
+                     available_day = MIN(
+                         COALESCE(promises.available_day, excluded.available_day),
+                         excluded.available_day
+                     )""",
                 (source["id"], client, promise["owner"], promise["what"], promise["due"],
-                 source["day"], source["at"], dataset_day)
+                 source["day"], source["at"], source["day"])
             )
         for promise_source, delivery_source in fulfilled_promises:
             delivery = evidence_by_id[delivery_source]
@@ -386,8 +434,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                     'is_blocker': False
                 }
             elif field == 'owner':
-                from_name = get_person_name(from_v)
-                to_name = get_person_name(to_v)
+                from_name = get_person_name(from_v, visible_people_names)
+                to_name = get_person_name(to_v, visible_people_names)
                 seen_task_field[key] = {
                     'text': f"{title} now owned by {to_name} (was {from_name})",
                     'sources': [rec_id],
@@ -439,7 +487,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
 
         open_these = []
         if final_changed:
-            for c in final_changed[:2]:
+            for c in final_changed[:3]:
                 open_these.append({
                     'record': c['sources'][0],
                     'why': c['text']
@@ -450,6 +498,12 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             q_to_ask = {
                 'text': f"Can we review progress on {final_changed[0]['text']}?",
                 'sources': final_changed[0]['sources']
+            }
+        elif active_promises:
+            first_promise = active_promises[0]
+            q_to_ask = {
+                'text': f"Can we confirm delivery of {first_promise['what']} by {first_promise['due']}?",
+                'sources': first_promise['sources']
             }
 
         ms = int((time.monotonic() - t0) * 1000)

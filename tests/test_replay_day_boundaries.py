@@ -11,8 +11,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from MemoFlow.db import get_connection, init_db
-from MemoFlow.ask_engine import _load_people, _visible_record_candidates, _task_catalog, _system_prompt
-from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt
+from MemoFlow.ask_engine import _load_people, _visible_record_candidates, _task_catalog, _task_state, _interpret, _system_prompt
+from MemoFlow.brief_engine import _model_change_items, _brief_system_prompt, generate_briefs, _visible_people_names
 from unittest.mock import patch
 
 
@@ -98,6 +98,27 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         people = _load_people(self.conn, "orgA", dataset_day=1, person="alice")
         self.assertEqual([p["id"] for p in people], ["alice"])
 
+    def test_brief_people_names_exclude_future_and_private_metadata(self):
+        private_record = {
+            "id": "bob-private", "day": 1, "org": "orgA", "type": "note",
+            "at": "2026-11-01T12:00:00Z", "author": "bob", "client": "clientA",
+            "visibility": "private", "readers": [], "title": "Private note",
+            "body": "private content",
+        }
+        self.conn.execute(
+            """INSERT INTO records(id,day,org,type,at,author,client,visibility,title,body,raw_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("bob-private", 1, "orgA", "note", private_record["at"], "bob",
+             "clientA", "private", "Private note", "private content",
+             json.dumps(private_record)),
+        )
+        self.conn.commit()
+        names = _visible_people_names(
+            self.conn, "alice", "orgA", dataset_day=1
+        )
+        self.assertIn("alice", names)
+        self.assertNotIn("bob", names)
+
     def test_model_promise_extraction_accepts_hinglish_and_validates_source(self):
         evidence = [{
             "id": "mail1", "type": "chat", "at": "2026-11-02T08:00:00Z",
@@ -123,6 +144,54 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         self.assertEqual(promises[0]["due"], "2026-11-03")
         self.assertEqual(promises[0]["sources"], ["mail1"])
         self.assertEqual(usage["input_tokens"], 100)
+
+    def test_brief_persists_hinglish_promise_and_reports_it(self):
+        chat = {
+            "id": "promise-chat", "day": 1, "org": "orgA", "type": "chat",
+            "at": "2026-11-01T10:00:00Z", "author": "alice", "client": "clientA",
+            "visibility": "team", "readers": [], "title": "Delivery",
+            "body": "kal tak bhej dungi",
+        }
+        event = {
+            "id": "meeting-record", "day": 1, "org": "orgA", "type": "event",
+            "at": "2026-11-01T10:55:00Z", "author": "alice", "client": "clientA",
+            "visibility": "team", "readers": [], "event_id": "meeting1",
+            "title": "Cobaltline sync", "start": "2026-11-01T11:00:00Z",
+            "attendees": ["alice"],
+        }
+        for record in (chat, event):
+            self.conn.execute(
+                """INSERT INTO records(id,day,org,type,at,author,client,visibility,title,body,raw_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (record["id"], record["day"], record["org"], record["type"],
+                 record["at"], record["author"], record["client"], record["visibility"],
+                 record.get("title", ""), record.get("body", ""), json.dumps(record)),
+            )
+        self.conn.commit()
+        response = {
+            "text": json.dumps({
+                "changes": [],
+                "promises": [{
+                    "owner": "alice", "what": "billing report",
+                    "due": "2026-11-02", "sources": ["promise-chat"]
+                }],
+                "fulfilled_promises": [],
+            }),
+            "usage": {"input_tokens": 120, "output_tokens": 35, "cost_usd": 0, "ms": 5},
+        }
+        with patch("MemoFlow.brief_engine.get_person_org", return_value="orgA"):
+            with patch("MemoFlow.brief_engine.get_person_zone", return_value="UTC"):
+                with patch("MemoFlow.brief_engine.call_llm", return_value=response):
+                    briefs = generate_briefs("alice", "2026-11-01", db_path=self.db_path, dataset_day=1)
+        self.assertEqual(len(briefs), 1)
+        self.assertEqual(briefs[0]["status"], "brief")
+        self.assertEqual(briefs[0]["promises"][0]["owner"], "alice")
+        self.assertEqual(briefs[0]["promises"][0]["due"], "2026-11-02")
+        self.assertEqual(briefs[0]["promises"][0]["sources"], ["promise-chat"])
+        stored = self.conn.execute(
+            "SELECT available_day FROM promises WHERE record_id='promise-chat'"
+        ).fetchone()
+        self.assertEqual(stored["available_day"], 1)
 
     def test_model_can_mark_prior_promise_fulfilled_by_later_evidence(self):
         evidence = [{
@@ -190,6 +259,58 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(day_one, [])
         self.assertEqual(len(day_two), 1)
+
+
+    def test_client_alias_fallback_stays_inside_resolved_client(self):
+        rows = _visible_record_candidates(
+            self.conn, "alice", "orgA", "2026-11-05T00:00:00Z",
+            "unindexednickname", dataset_day=1, client_id="clientA",
+        )
+        self.assertTrue(rows)
+        self.assertEqual({row["id"] for row in rows}, {"r1"})
+
+    def test_task_state_skips_latest_private_update_and_uses_latest_readable(self):
+        private_record = {
+            "id": "private-task-update", "day": 2, "org": "orgA", "type": "task",
+            "at": "2026-11-02T10:00:00Z", "author": "bob", "client": "clientA",
+            "visibility": "private", "readers": [], "task_id": "task-old",
+            "title": "private owner update", "owner": "bob", "due": "2026-12-02",
+            "status": "done", "body": "private task update",
+        }
+        self.conn.execute(
+            """INSERT INTO records
+               (id,day,org,type,at,author,client,visibility,task_id,title,owner,due,status,body,raw_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("private-task-update", 2, "orgA", "task", private_record["at"],
+             "bob", "clientA", "private", "task-old", "private owner update",
+             "bob", "2026-12-02", "done", "private task update",
+             json.dumps(private_record)),
+        )
+        self.conn.commit()
+        state = _task_state(
+            self.conn, "task-old", "2026-11-05T00:00:00Z", "alice", "orgA",
+            dataset_day=2,
+        )
+        self.assertIsNotNone(state)
+        self.assertEqual(state[1], "r1")
+
+    def test_question_interpretation_receives_scoped_correction_context(self):
+        correction = {"feedback_id": 4, "available_day": 2,
+                      "meeting": "m1", "text": "Arjun handles billing now, not Kavya"}
+        response = {
+            "text": json.dumps({"intent": "record_lookup", "time_mode": "current",
+                                "search_terms": "billing", "client_id": "clientA"}),
+            "usage": {"input_tokens": 20, "output_tokens": 10, "cost_usd": 0, "ms": 2},
+        }
+        with patch("MemoFlow.ask_engine.call_llm", return_value=response) as mocked:
+            result, _ = _interpret(
+                "Who handles billing?", "2026-11-05T00:00:00Z", "alice",
+                [{"id": "clientA", "name": "Cobaltline"}], [], [],
+                corrections=[correction],
+            )
+        self.assertEqual(result["client_id"], "clientA")
+        sent_prompt = mocked.call_args.args[0]
+        self.assertIn("Arjun handles billing now, not Kavya", sent_prompt)
 
     def test_schema_has_day_provenance_columns(self):
         forget_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(forgets)")}

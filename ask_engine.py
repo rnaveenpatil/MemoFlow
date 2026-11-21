@@ -185,7 +185,7 @@ def _task_catalog(conn, at, org, person, forgets=None, dataset_day=None):
     return list(by_id.values())
 
 
-def _interpret(ask, at, person, clients, tasks, people, data_window=None, corrections=None):
+def _interpret(ask, at, person, clients, tasks, people, data_window=None, corrections=None, user_updates=None):
     prompt = {
         "question": ask,
         "current_time_utc": at,
@@ -209,9 +209,14 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None, correc
         "available_tasks": tasks,
         "available_people": people,
         "user_corrections": corrections or [],
+        "user_provided_updates": user_updates or [],
         "instructions": (
             "Interpret the user's meaning, not exact keywords. Map nicknames and abbreviations "
-            "to an available client only when evidence supports it. Select a task only when the "
+            "to an available client only when evidence supports it. Apply supplied user_corrections "
+            "when resolving this requester's own memory; they are scoped to this requester and "
+            "supersede only the specific corrected belief, not unrelated facts. Include the canonical "
+            "client ID and useful canonical client-name/topic terms in search_terms when resolving "
+            "an alias. Select a task only when the "
             "question identifies it sufficiently. Choose intent: task_lookup, record_lookup, "
             "privacy_request, or unknown. For task_lookup choose field owner, due, status, or summary. "
             "For record_lookup provide concise search_terms. For task_lookup, if one task fits, return its exact task_id. If two or more fit comparably, set needs_clarification true, return every plausible candidate_task_ids value, and ask one concise question naming the candidate titles. If none fit, do not select a task. Never omit candidate IDs when ambiguity is present. Do not guess. "
@@ -314,7 +319,23 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
             LIMIT 80
         """, (fts_query, org, at, start_at, start_at, end_at, end_at, dataset_day, dataset_day, client_id, client_id)).fetchall()
     except Exception:
-        return []
+        rows = []
+
+    # If an alias resolves to a known client but no literal FTS token matches,
+    # fall back to a small, client-scoped recent evidence window. Authorization
+    # is still checked below before any record reaches the model.
+    if not rows and client_id:
+        rows = conn.execute("""
+            SELECT r.id, r.raw_json, r.at, 0.0 AS rank
+            FROM records r
+            WHERE r.org = ? AND r.client = ? AND r.at <= ?
+              AND (? IS NULL OR r.at >= ?)
+              AND (? IS NULL OR r.at <= ?)
+              AND (? IS NULL OR r.day <= ?)
+            ORDER BY r.at DESC
+            LIMIT 80
+        """, (org, client_id, at, start_at, start_at, end_at, end_at,
+              dataset_day, dataset_day)).fetchall()
 
     out = []
     for row in rows:
@@ -355,21 +376,20 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
 
 
 def _task_state(conn, task_id, at, person, org, forgets=None, dataset_day=None):
-    row = conn.execute("""
+    rows = conn.execute("""
         SELECT id, raw_json FROM records
         WHERE type = 'task' AND task_id = ? AND org = ? AND at <= ?
           AND (? IS NULL OR day <= ?)
-        ORDER BY at DESC LIMIT 1
-    """, (task_id, org, at, dataset_day, dataset_day)).fetchone()
-    if not row:
-        return None
-    try:
-        record = json.loads(row["raw_json"])
-    except (TypeError, ValueError):
-        return None
-    if not can_person_read(record, person, org, forgets=forgets):
-        return None
-    return record, row["id"]
+        ORDER BY at DESC
+    """, (task_id, org, at, dataset_day, dataset_day)).fetchall()
+    for row in rows:
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if can_person_read(record, person, org, forgets=forgets):
+            return record, row["id"]
+    return None
 
 
 def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
@@ -382,7 +402,7 @@ def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
     }
 
 
-def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=None):
+def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=None, include_user_updates=False):
     started = time.monotonic()
     init_db(reset=False, db_path=db_path)
     conn = get_connection(db_path)
@@ -426,6 +446,28 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
              "meeting": row["meeting"], "text": row["words"]}
             for row in correction_rows if row["words"]
         ]
+        user_updates = []
+        if include_user_updates:
+            if workspace_session:
+                update_rows = conn.execute(
+                    """SELECT id, text, created_at FROM user_updates
+                       WHERE org = ? AND scope = 'workspace'
+                         AND (available_day IS NULL OR available_day <= ?)
+                       ORDER BY created_at ASC""", (org, dataset_day)
+                ).fetchall()
+            else:
+                update_rows = conn.execute(
+                    """SELECT id, text, created_at FROM user_updates
+                       WHERE org = ? AND scope = 'person' AND author = ?
+                         AND (available_day IS NULL OR available_day <= ?)
+                       ORDER BY created_at ASC""", (org, str(person), dataset_day)
+                ).fetchall()
+            blocked_update_terms = [str(term).casefold() for term in forget_terms if term]
+            user_updates = [
+                {"id": row["id"], "text": row["text"], "created_at": row["created_at"]}
+                for row in update_rows
+                if not any(term in (row["text"] or "").casefold() for term in blocked_update_terms)
+            ]
         tasks = []
         people = _load_people(conn, org, dataset_day=dataset_day, person=person, forgets=forget_terms)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
@@ -434,7 +476,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         clients = _load_clients(conn, org, person, forgets=forget_terms, dataset_day=dataset_day)
         data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms, dataset_day=dataset_day)
         interpretation, interpretation_call = _interpret(
-            ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
+            ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections, user_updates=user_updates
         )
         usage = _usage(interpretation_call, started)
 
@@ -480,7 +522,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         # This prevents later-day tasks from influencing a historical question.
         if interpretation.get("intent") == "task_lookup":
             task_interpretation, task_call = _interpret(
-                ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
+                ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections, user_updates=user_updates
             )
             task_usage = _usage(task_call, started)
             usage = {
@@ -561,23 +603,13 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 })
             update_text = update_text.strip()[:4000]
             record_id = "user-update-" + uuid.uuid4().hex
-            update_record = {
-                "id": record_id,
-                "org": org,
-                "type": "note",
-                "at": at,
-                "author": "user_provided" if workspace_session else person,
-                "client": None,
-                "visibility": "team" if workspace_session else "private",
-                "title": "User-provided workspace update",
-                "body": (
-                    "USER-PROVIDED MEMORY (not independently verified). "
-                    "Treat this as a later user instruction or correction, not as an original dataset record. "
-                    + update_text
-                )
-            }
-            from MemoFlow.db import insert_record
-            insert_record(conn, update_record, dataset_day)
+            scope = "workspace" if workspace_session else "person"
+            conn.execute(
+                """INSERT INTO user_updates
+                   (id, org, scope, author, text, created_at, available_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (record_id, org, scope, str(person), update_text, at, dataset_day)
+            )
             conn.commit()
             return _empty(usage, answer={
                 "text": "Saved to workspace memory as a user-provided update. It is not treated as independently verified dataset evidence.",
@@ -633,14 +665,18 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             search_terms += " " + " ".join(
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
-        if interpretation.get("client_id") not in visible_client_ids:
-            interpretation["client_id"] = None
+        client_id = interpretation.get("client_id")
+        if client_id not in visible_client_ids:
+            client_id = None
+        if client_id:
+            client_name = next((item["name"] for item in clients if item["id"] == client_id), "")
+            search_terms += f" {client_id} {client_name}"
         candidates = _visible_record_candidates(
             conn, person, org, effective_at, search_terms, forgets=forget_terms,
             start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day,
-            client_id=interpretation.get("client_id")
+            client_id=client_id
         )
-        if not candidates:
+        if not candidates and not user_updates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
 
         prompt = {
@@ -649,8 +685,9 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             "effective_time_window": query_time,
             "evidence": candidates,
             "user_corrections": corrections,
+            "user_provided_updates": user_updates,
             "instructions": (
-                "Answer from authorized evidence together with the user's scoped corrections. A correction is "
+                "Answer from authorized evidence, the explicitly enabled and correctly scoped user-provided updates, and the user's scoped corrections. Updates are not dataset evidence and must never be cited as imported records. A correction is "
                 "user-provided memory with provenance, not an imported record. Use it to supersede "
                 "the corrected belief only for this user; do not expose it to other users. Understand "
                 "corrections expressed in natural language, including "
@@ -685,7 +722,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             return _empty(usage, answer={"text": "I couldn't produce a reliable answer from the available records.", "sources": []})
 
         allowed = {r["id"] for r in candidates}
-        sources = [s for s in (generated.get("sources") or []) if s in allowed]
+        allowed_updates = {item["id"] for item in user_updates}
+        sources = [s for s in (generated.get("sources") or []) if s in allowed or s in allowed_updates]
         if not sources:
             return _empty(usage, answer={"text": "The available records did not support a verifiable answer.", "sources": []})
         matched = [
