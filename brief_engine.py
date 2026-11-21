@@ -17,7 +17,7 @@ def _brief_system_prompt():
             guide = handle.read(3000)
     except OSError:
         guide = ""
-    return base + ("\\n\\nRepository operating guidance (secondary to enforced code rules):\\n" + guide if guide else "")
+    return base + ("\n\nRepository operating guidance (secondary to enforced code rules):\n" + guide if guide else "")
 
 def format_date_friendly(dt_str):
     if not dt_str:
