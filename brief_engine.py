@@ -159,11 +159,13 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
     
     all_events = cur.fetchall()
     target_meetings = []
+    visible_events = []
 
     for ev in all_events:
         r = json.loads(ev['raw_json'])
         if not can_person_read(r, person, person_org, forgets=forgets):
             continue
+        visible_events.append(r)
         attendees = r.get('attendees') or []
         if person not in attendees and r.get('author') != person:
             continue
@@ -184,25 +186,29 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         meet_id = meet.get('event_id')
         client = meet.get('client')
 
-        # Find previous meeting for this client to determine window
-        cur.execute('''
-        SELECT r.at FROM records r
-        WHERE r.type = 'event' AND r.client = ? AND r.org = ? AND r.at < ?
-          AND (? IS NULL OR r.day <= ?)
-        ORDER BY r.at DESC LIMIT 1
-        ''', (client, person_org, meet.get('start', ''), dataset_day, dataset_day))
-        prev_row = cur.fetchone()
-        if prev_row:
-            window_start = prev_row['at']
+        # Hidden meetings must not influence the visible evidence window.
+        previous_starts = [
+            event.get('start') for event in visible_events
+            if event.get('client') == client and event.get('start')
+            and event.get('start') < meet.get('start', '')
+        ]
+        if previous_starts:
+            window_start = max(previous_starts)
         else:
             cur.execute("""
-            SELECT MIN(at) AS first_at FROM records
+            SELECT at, raw_json FROM records
             WHERE org = ? AND client = ? AND at <= ?
               AND (? IS NULL OR day <= ?)
             """, (person_org, client, meet.get('start', ''), dataset_day, dataset_day))
-            first_row = cur.fetchone()
-            window_start = (first_row['first_at'] if first_row and first_row['first_at']
-                            else meet.get('start', ''))
+            readable_times = []
+            for candidate in cur.fetchall():
+                try:
+                    candidate_record = json.loads(candidate['raw_json'])
+                except (TypeError, ValueError):
+                    continue
+                if can_person_read(candidate_record, person, person_org, forgets=forgets):
+                    readable_times.append(candidate['at'])
+            window_start = min(readable_times) if readable_times else meet.get('start', '')
 
         # Candidate changes
         changed_items = []
