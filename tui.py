@@ -59,7 +59,7 @@ def _import_feedback(conn):
                     raise ValueError(f"{name} line {line_no}: feedback row must be a JSON object")
                 feedback_rows.append(fb)
         for fb in feedback_rows:
-            values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
+            feedback_day = _day_from_name(name)\n            values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
                       fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
             exists = conn.execute(
                 """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
