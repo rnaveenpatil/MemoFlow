@@ -1,10 +1,41 @@
-"""Configuration and domain constants for MemoFlow."""
+"""Configuration, domain constants, and environment loader for MemoFlow."""
 import os, json
 from datetime import timedelta
 
 PACK_ROOT = os.environ.get('R3_PACK') or os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PACK_ROOT, 'data')
 DB_PATH = os.environ.get('MEMOFLOW_DB') or os.path.join(os.path.dirname(__file__), 'memoflow.db')
+
+def load_dotenv():
+    """Load key-value pairs from .env without external dependencies."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), '.env'),
+        os.path.join(PACK_ROOT, '.env')
+    ]
+    for env_path in candidates:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#'):
+                            continue
+                        if '=' in line:
+                            k, v = line.split('=', 1)
+                            k, v = k.strip(), v.strip()
+                            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                                v = v[1:-1]
+                            if k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+load_dotenv()
+
+# LLM Configuration
+LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.groq.com/openai/v1')
+LLM_MODEL_ID = os.environ.get('LLM_MODEL_ID', 'qwen3.8-27b')
+LLM_API_KEY = os.environ.get('LLM_API_KEY') or os.environ.get('GROQ_API_KEY') or os.environ.get('OPENAI_API_KEY')
 
 ZONES = {
     'Asia/Kolkata': timedelta(hours=5, minutes=30),

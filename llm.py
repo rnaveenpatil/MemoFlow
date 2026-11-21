@@ -1,39 +1,67 @@
-"""LLM integration for MemoFlow with intelligent fallback and accurate token reporting."""
-import os, json, time
+"""LLM integration for MemoFlow supporting Groq, OpenAI-compatible APIs, and local fallback."""
+import os, json, time, sys
+import urllib.request
+import urllib.error
+from MemoFlow.config import LLM_BASE_URL, LLM_MODEL_ID, LLM_API_KEY
 
-def call_llm(prompt, max_tokens=1000):
-    """Call external LLM (e.g. Gemini or OpenAI) if API key is provided, or return None."""
-    api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('OPENAI_API_KEY')
-    if not api_key:
+def call_llm(prompt, system_prompt=None, max_tokens=800):
+    """Call Groq / OpenAI-compatible endpoint if API key is provided, or return None."""
+    api_key = LLM_API_KEY
+    if not api_key or api_key == 'your_groq_api_key_here':
         return None
 
+    endpoint = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
     t0 = time.monotonic()
-    # If Gemini API key is present:
-    if os.environ.get('GEMINI_API_KEY'):
-        try:
-            import urllib.request
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-            payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode('utf-8')
-            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                res = json.loads(resp.read().decode('utf-8'))
-                text = res['candidates'][0]['content']['parts'][0]['text']
-                ms = int((time.monotonic() - t0) * 1000)
-                in_tok = len(prompt) // 4
-                out_tok = len(text) // 4
-                return {
-                    'text': text,
-                    'usage': {
-                        'input_tokens': in_tok,
-                        'output_tokens': out_tok,
-                        'cost_usd': round(in_tok * 0.000000075 + out_tok * 0.0000003, 6),
-                        'ms': ms
-                    }
-                }
-        except Exception:
-            return None
 
-    return None
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = {
+        "model": LLM_MODEL_ID,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": max_tokens
+    }
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            endpoint,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "MemoFlow/1.0"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw_response = json.loads(resp.read().decode('utf-8'))
+            ms = int((time.monotonic() - t0) * 1000)
+
+            choice = raw_response.get('choices', [{}])[0]
+            text = choice.get('message', {}).get('content', '')
+
+            usage = raw_response.get('usage', {})
+            in_tok = usage.get('prompt_tokens', len(prompt) // 4)
+            out_tok = usage.get('completion_tokens', len(text) // 4)
+
+            # Standard cost estimation for Groq
+            cost = round(in_tok * 0.0000005 + out_tok * 0.0000015, 6)
+
+            return {
+                'text': text,
+                'usage': {
+                    'input_tokens': in_tok,
+                    'output_tokens': out_tok,
+                    'cost_usd': cost,
+                    'ms': ms
+                }
+            }
+    except Exception as e:
+        print(f"[MemoFlow LLM] Warning: LLM call failed ({e}), using fallback.", file=sys.stderr)
+        return None
 
 def compute_usage(prompt_text, output_text, elapsed_ms):
     """Compute and format standard usage object."""
