@@ -378,3 +378,29 @@ class ConversationIntentTests(unittest.TestCase):
         prompt = json.loads(mocked.call_args.args[0])
         self.assertIn("ordinary conversation", prompt["instructions"].lower())
         self.assertIn("conversation_response", prompt["required_json"])
+
+
+class ConversationRecoveryTests(unittest.TestCase):
+    def test_uncertain_greeting_is_rechecked_semantically(self):
+        from MemoFlow.ask_engine import _recheck_conversation_intent
+        response = {
+            "text": json.dumps({
+                "intent": "conversation",
+                "conversation_response": "Hey! How can I help?",
+            }),
+            "usage": {"input_tokens": 8, "output_tokens": 7, "cost_usd": 0.0, "ms": 1},
+        }
+        with patch("MemoFlow.ask_engine.call_llm", return_value=response):
+            result, _ = _recheck_conversation_intent("hlo")
+        self.assertEqual(result["intent"], "conversation")
+        self.assertEqual(result["conversation_response"], "Hey! How can I help?")
+
+    def test_uncertain_workplace_intent_is_not_reclassified_as_conversation(self):
+        from MemoFlow.ask_engine import _recheck_conversation_intent
+        response = {
+            "text": json.dumps({"intent": "workplace", "conversation_response": None}),
+            "usage": {"input_tokens": 8, "output_tokens": 4, "cost_usd": 0.0, "ms": 1},
+        }
+        with patch("MemoFlow.ask_engine.call_llm", return_value=response):
+            result, _ = _recheck_conversation_intent("Who owns the billing task?")
+        self.assertIsNone(result)
