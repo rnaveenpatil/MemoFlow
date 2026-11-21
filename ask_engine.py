@@ -544,8 +544,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             # Identity-free workspace chat cannot safely attribute this to one employee.
             # Apply it as a workspace-wide retrieval suppression, retaining provenance.
             conn.execute(
-                "INSERT INTO forgets (person, what) VALUES (?, ?)",
-                ("*", forget_text)
+                "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
+                ("*", forget_text, dataset_day)
             )
             conn.commit()
             return _empty(usage, answer={
@@ -568,7 +568,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 "at": at,
                 "author": "user_provided" if workspace_session else person,
                 "client": None,
-                "visibility": "team",
+                "visibility": "team" if workspace_session else "private",
                 "title": "User-provided workspace update",
                 "body": (
                     "USER-PROVIDED MEMORY (not independently verified). "
@@ -577,7 +577,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 )
             }
             from MemoFlow.db import insert_record
-            insert_record(conn, update_record, None)
+            insert_record(conn, update_record, dataset_day)
             conn.commit()
             return _empty(usage, answer={
                 "text": "Saved to workspace memory as a user-provided update. It is not treated as independently verified dataset evidence.",
