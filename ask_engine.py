@@ -185,7 +185,7 @@ def _task_catalog(conn, at, org, person, forgets=None, dataset_day=None):
     return list(by_id.values())
 
 
-def _interpret(ask, at, person, clients, tasks, people, data_window=None):
+def _interpret(ask, at, person, clients, tasks, people, data_window=None, corrections=None):
     prompt = {
         "question": ask,
         "current_time_utc": at,
@@ -208,6 +208,7 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None):
         "available_clients": clients,
         "available_tasks": tasks,
         "available_people": people,
+        "user_corrections": corrections or [],
         "instructions": (
             "Interpret the user's meaning, not exact keywords. Map nicknames and abbreviations "
             "to an available client only when evidence supports it. Select a task only when the "
@@ -409,6 +410,22 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 "SELECT what FROM forgets WHERE person IN (?, '*') AND (day IS NULL OR day <= ?)", (str(person), dataset_day)
             ).fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
+        if workspace_session:
+            correction_rows = []
+        else:
+            correction_rows = conn.execute(
+                """SELECT id, day, available_day, meeting, words
+                   FROM feedback
+                   WHERE person = ? AND type = 'correction'
+                     AND (? IS NULL OR available_day <= ?)
+                   ORDER BY available_day ASC, id ASC""",
+                (str(person), dataset_day, dataset_day)
+            ).fetchall()
+        corrections = [
+            {"feedback_id": row["id"], "available_day": row["available_day"],
+             "meeting": row["meeting"], "text": row["words"]}
+            for row in correction_rows if row["words"]
+        ]
         tasks = []
         people = _load_people(conn, org, dataset_day=dataset_day, person=person, forgets=forget_terms)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
@@ -417,7 +434,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         clients = _load_clients(conn, org, person, forgets=forget_terms, dataset_day=dataset_day)
         data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms, dataset_day=dataset_day)
         interpretation, interpretation_call = _interpret(
-            ask, at, person, clients, tasks, people, data_window=data_window
+            ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
         )
         usage = _usage(interpretation_call, started)
 
@@ -463,7 +480,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         # This prevents later-day tasks from influencing a historical question.
         if interpretation.get("intent") == "task_lookup":
             task_interpretation, task_call = _interpret(
-                ask, at, person, clients, tasks, people, data_window=data_window
+                ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
             )
             task_usage = _usage(task_call, started)
             usage = {
@@ -631,8 +648,12 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             "asked_at_utc": at,
             "effective_time_window": query_time,
             "evidence": candidates,
+            "user_corrections": corrections,
             "instructions": (
-                "Answer only from evidence. Understand corrections expressed in natural language, including "
+                "Answer from authorized evidence together with the user's scoped corrections. A correction is "
+                "user-provided memory with provenance, not an imported record. Use it to supersede "
+                "the corrected belief only for this user; do not expose it to other users. Understand "
+                "corrections expressed in natural language, including "
                 "negations and replacement statements (for example, one person now owns a responsibility "
                 "instead of another). A clear explicit correction supersedes the older value. For "
                 "conflicting claims, prefer a manager's explicit statement over an intern's; if authority "
