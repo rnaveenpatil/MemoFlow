@@ -62,7 +62,7 @@ def _ingest_feedback(conn, feedback_day):
 def handle_ingest(day):
     if day < 1:
         raise ValueError("Day must be a positive integer.")
-    init_db(reset=(day == 1))
+    init_db(reset=False)
     conn = get_connection()
     imported = {}
     feedback_count = 0
