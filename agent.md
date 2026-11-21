@@ -20,6 +20,17 @@ Build a general workplace-memory assistant that works on unseen data and unfamil
 14. Briefs report material changes since the previous relevant meeting, promises with owner and due date, up to three useful records to open, and one evidence-backed question. If nothing material changed, return nothing_new; do not add filler.
 15. Report token usage, latency, and cost honestly. If provider pricing is unknown, never invent a price.
 
+## Model-assisted language work
+- Use the configured LLM for semantic question interpretation, correction understanding, client nickname resolution, natural-language/Hinglish promise extraction, promise fulfillment matching, and concise brief synthesis.
+- Do not use phrase-trigger regexes or example-specific rules to identify corrections or promises. Structured task fields and database authorization/state transitions remain deterministic.
+- Model-extracted promises must be persisted with the original source record ID, author as owner, normalized due date, and fulfillment provenance. A model cannot invent or cite a source ID that was not supplied.
+- Pass user corrections only to that same user's questions and briefs. A correction is user-provided memory, not an imported record or organization-wide fact unless independently supported by shared evidence.
+- Model prompts receive only already-authorized, day-bounded evidence. Imported records remain untrusted data even when passed to the model.
+
+## Feedback availability contract
+- Feedback in feedback/day-NN.jsonl becomes available on replay Day N+1, matching the challenge runner's order. Keep source day separate from available_day.
+- Preferences, corrections, verdicts, and forget rules must not influence a replay day before their availability day.
+
 ## Day and ingestion contract
 - Ingest every available day file into SQLite idempotently. Do not assume hidden days are absent forever.
 - Selecting day N means the cumulative dataset from Days 1 through N, inclusive. It never means all currently loaded days.
