@@ -254,11 +254,20 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                 continue
             if is_newsletter_or_spam(rec):
                 continue
+            try:
+                author_local_date = (
+                    datetime.strptime(rec.get('at', '')[:19], '%Y-%m-%dT%H:%M:%S')
+                    + ZONES.get(get_person_zone(rec.get('author')), ZONES['UTC'])
+                ).date().isoformat()
+            except (TypeError, ValueError):
+                author_local_date = None
             item = {
                 'id': rec.get('id'),
+                'day': row['day'],
                 'type': rec.get('type'),
                 'at': rec.get('at'),
                 'author': rec.get('author'),
+                'author_local_date': author_local_date,
                 'title': rec.get('title') or rec.get('subject') or '',
                 'body': (rec.get('body') or '')[:1000]
             }
