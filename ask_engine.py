@@ -616,6 +616,8 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             search_terms += " " + " ".join(
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
+        if interpretation.get("client_id") not in visible_client_ids:
+            interpretation["client_id"] = None
         candidates = _visible_record_candidates(
             conn, person, org, effective_at, search_terms, forgets=forget_terms,
             start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day,
