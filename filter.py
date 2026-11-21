@@ -35,8 +35,11 @@ def can_person_read(rec, person_id, person_org, forgets=None):
             try:
                 readers = json.loads(readers)
             except (TypeError, ValueError):
-                readers = [readers]
-        if person_id not in readers:
+                return False
+        # Malformed reader metadata must never grant access by substring/key matching.
+        if not isinstance(readers, list) or not all(isinstance(item, str) for item in readers):
+            return False
+        if str(person_id) not in readers:
             return False
     elif visibility != "team":
         return False
