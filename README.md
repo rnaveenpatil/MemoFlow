@@ -2,7 +2,7 @@
 
 MemoFlow is a lightweight, high-performance meeting assistant built with **Python + SQLite (with FTS5 full-text search)**. It processes workspace communication records, tracks task and document states across days, generates client meeting briefs, and answers ad-hoc questions with privacy boundaries and source citations.
 
-## Quick start: MemoFlow chat UI
+## Quick start: terminal chat
 
 Run:
 
@@ -10,19 +10,21 @@ Run:
 python main.py
 ```
 
-The Tkinter interface automatically discovers the bundled dataset, imports all available day files into SQLite, and opens the chat. No file picker or manual ingestion is required. The interface includes a dataset-day selector (1–15), workspace selector, scrollable chat transcript, and message composer. Press **Ctrl+Enter** or click **Send** to ask a question. Use **Refresh database** only after adding new dataset files.
+The terminal assistant automatically discovers the bundled dataset, imports all available day files into SQLite, and opens an interactive chat. No file picker or manual ingestion is required. Select a workspace and dataset day when prompted, then type questions directly at `You:`. Keep chatting until `/exit`.
+
+Commands inside chat: `/day N` changes the dataset scope, `/refresh` imports newly added files, and `/help` lists commands.
 
 ### Dataset-day behavior
 
 - On startup, **all day files present in the bundled dataset folder are ingested into SQLite**. Existing record IDs are not imported twice.
 - **Day 1–5:** the query engine uses cumulative records through the selected day and applies that day's latest record timestamp as a hard upper bound. Later records cannot be used.
-- **Day 6–15:** the query engine searches all records currently available in SQLite. It never invents missing hidden-day records. Use **Refresh database** after adding files.
+- **Day 6–15:** the query engine searches all records currently available in SQLite. It never invents missing hidden-day records. Use `/refresh` after adding files.
 - Records, people, clients, feedback, task history, and forget rules are stored in SQLite. Original JSONL files are not modified.
 - The selected dataset day is separate from dates mentioned in questions. The LLM interprets natural-language date intent; Python enforces the SQL time boundary.
 
 ### Privacy and identity
 
-The UI does not pretend that mentioning an employee name authenticates the speaker. Choose a workspace organization before chatting. In identity-free mode MemoFlow can read **team-visible** records only; private and restricted records are denied. Supporting private/restricted access requires a verified member login, which this UI does not claim to provide. Organizations are isolated before retrieval and before evidence reaches the LLM.
+The terminal session does not authenticate an individual employee. It can read **team-visible** records only; private and restricted records are denied. Do not treat selecting a workspace or mentioning an employee name as identity verification. Private/restricted access requires a verified member login. Organization, visibility, and forget filters are applied before records reach the LLM. Client metadata and dataset time hints are also restricted to readable records.
 
 ### Chat behavior
 
