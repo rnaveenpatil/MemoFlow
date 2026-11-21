@@ -37,7 +37,7 @@ def get_person_name(pid):
     return pid
 
 
-def _model_change_items(records, corrections, meeting, client, meeting_start=None):
+def _model_change_items(records, corrections, meeting, client, meeting_start=None, open_promises=None):
     """Extract meaningful changes and natural-language promises from authorized evidence."""
     if not records:
         return [], [], [], None
@@ -45,6 +45,7 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
         "meeting": meeting,
         "client_id": client,
         "records": records,
+        "open_promises": open_promises or [],
         "corrections": [dict(words=r["words"], meeting=r["meeting"]) for r in corrections],
         "instructions": (
             "Identify material changes since the previous meeting for this client. "
@@ -82,6 +83,7 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
     if not isinstance(parsed, dict):
         return [], [], [], result.get('usage')
     allowed = {r["id"] for r in records}
+    promise_source_ids = allowed | {p.get("source") for p in (open_promises or [])}
     by_id = {r["id"]: r for r in records}
     items = []
     for item in parsed.get("changes", []) if isinstance(parsed, dict) else []:
@@ -130,10 +132,12 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
         if not isinstance(item, dict):
             continue
         source_id, fulfilled_by = item.get("source"), item.get("fulfilled_by")
-        if source_id in allowed and fulfilled_by in allowed:
-            source_at = by_id[source_id].get("at") or ""
+        if source_id in promise_source_ids and fulfilled_by in allowed:
+            source_at = by_id[source_id].get("at") if source_id in by_id else next(
+                (p.get("at") for p in (open_promises or []) if p.get("source") == source_id), ""
+            )
             delivery_at = by_id[fulfilled_by].get("at") or ""
-            if delivery_at > source_at:
+            if source_at and delivery_at > source_at:
                 fulfilled.append((source_id, fulfilled_by))
     return items, promises, fulfilled, result.get('usage')
 
@@ -263,8 +267,29 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                 continue
             evidence.append(item)
             evidence_chars += item_size
+        # Load previously extracted open commitments so the model can recognize
+        # fulfillment even when the original promise predates the previous meeting.
+        cur.execute("""
+            SELECT p.record_id, p.owner, p.what, p.due, p.at, r.raw_json
+            FROM promises p JOIN records r ON r.id = p.record_id
+            WHERE p.client = ? AND p.fulfilled = 0 AND p.at <= ?
+              AND (? IS NULL OR r.day <= ?)
+        """, (client, meet.get('start', ''), dataset_day, dataset_day))
+        open_promises = []
+        for promise_row in cur.fetchall():
+            try:
+                promise_record = json.loads(promise_row["raw_json"])
+            except (TypeError, ValueError):
+                continue
+            if can_person_read(promise_record, person, person_org, forgets=forgets):
+                open_promises.append({
+                    "source": promise_row["record_id"], "owner": promise_row["owner"],
+                    "what": promise_row["what"], "due": promise_row["due"],
+                    "at": promise_row["at"]
+                })
         model_items, model_promises, fulfilled_promises, model_usage = _model_change_items(
-            evidence, corrections, meet_id, client, meeting_start=meet.get('start')
+            evidence, corrections, meet_id, client, meeting_start=meet.get('start'),
+            open_promises=open_promises
         )
         changed_items.extend(model_items)
         # Persist model-extracted commitments with their original record provenance.
