@@ -103,6 +103,16 @@ def _person_org(conn, person_id):
     return row["org"] if row else get_person_org(person_id)
 
 
+def _dataset_time_range(conn, org):
+    row = conn.execute(
+        "SELECT MIN(at) AS first_at, MAX(at) AS last_at FROM records WHERE org = ?",
+        (org,)
+    ).fetchone()
+    if not row:
+        return {}
+    return {"first_record_utc": row["first_at"], "last_record_utc": row["last_at"]}
+
+
 def _task_catalog(conn, at, org, person, forgets=None):
     rows = conn.execute("""
         SELECT task_id, title, client, raw_json
@@ -129,14 +139,16 @@ def _task_catalog(conn, at, org, person, forgets=None):
     return list(by_id.values())
 
 
-def _interpret(ask, at, person, clients, tasks, people):
+def _interpret(ask, at, person, clients, tasks, people, data_window=None):
     prompt = {
         "question": ask,
         "current_time_utc": at,
         "time_resolution_instructions": (
             "Determine the time requested by the user. If they mention a date/time or relative "
             "period (today, yesterday, last Friday, on Nov 4, between Nov 1 and Nov 5, as of "
-            "the end of October), resolve it relative to current_time_utc. Return all boundaries "
+            "the end of October), resolve it relative to current_time_utc. If the user omits "
+            "the year, prefer the year represented by available_dataset_time_range; ask if "
+            "multiple years remain plausible. Return all boundaries "
             "in UTC ISO-8601 ending in Z, interpreting calendar dates in query_timezone. "
             "Use time_mode='on_date' for one calendar day, "
             "'range' for a bounded period, 'as_of' for a historical snapshot/cutoff, and "
@@ -146,6 +158,7 @@ def _interpret(ask, at, person, clients, tasks, people):
             "records available in the supplied database."
         ),
         "query_timezone": "Asia/Kolkata",
+        "available_dataset_time_range": data_window or {},
         "available_clients": clients,
         "available_tasks": tasks,
         "available_people": people,
@@ -328,7 +341,10 @@ def answer_ask(person, at, ask, db_path=None):
         clients = _load_clients(conn)
         tasks = []
         people = _load_people(conn, org)
-        interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks, people)
+        data_window = _dataset_time_range(conn, org)
+        interpretation, interpretation_call = _interpret(
+            ask, at, person, clients, tasks, people, data_window=data_window
+        )
         usage = _usage(interpretation_call, started)
 
         if not interpretation:
@@ -356,7 +372,9 @@ def answer_ask(person, at, ask, db_path=None):
         # Task names/IDs are fetched only after the time boundary is resolved.
         # This prevents later-day tasks from influencing a historical question.
         if interpretation.get("intent") == "task_lookup":
-            task_interpretation, task_call = _interpret(ask, at, person, clients, tasks, people)
+            task_interpretation, task_call = _interpret(
+                ask, at, person, clients, tasks, people, data_window=data_window
+            )
             task_usage = _usage(task_call, started)
             usage = {
                 "input_tokens": usage.get("input_tokens", 0) + task_usage.get("input_tokens", 0),
