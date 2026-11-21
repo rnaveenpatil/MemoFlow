@@ -520,7 +520,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         # This prevents later-day tasks from influencing a historical question.
         if interpretation.get("intent") == "task_lookup":
             task_interpretation, task_call = _interpret(
-                ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
+                ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections, user_updates=user_updates
             )
             task_usage = _usage(task_call, started)
             usage = {
