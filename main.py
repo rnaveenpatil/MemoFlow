@@ -52,8 +52,8 @@ def _ingest_feedback(conn, feedback_day):
             ).fetchone()
             if not forget_exists:
                 conn.execute(
-                    "INSERT INTO forgets (person, what) VALUES (?, ?)",
-                    (fb.get("person"), fb.get("words"))
+                    "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
+                    (fb.get("person"), fb.get("words"), feedback_day)
                 )
         count += 1
     return count
@@ -120,7 +120,8 @@ def handle_ask(person, at, ask):
 def handle_forget(person, what):
     init_db(reset=False)
     conn = get_connection()
-    conn.execute("INSERT INTO forgets (person, what) VALUES (?, ?)", (person, what))
+    current_day = conn.execute("SELECT MAX(day) AS day FROM records").fetchone()["day"]
+    conn.execute("INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)", (person, what, current_day))
     conn.commit()
     conn.close()
     print(json.dumps({"ok": True}))
