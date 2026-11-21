@@ -59,6 +59,31 @@ def init_db(reset=False, db_path=None):
     );
     ''')
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS people (
+        person_id TEXT PRIMARY KEY,
+        org TEXT,
+        name TEXT NOT NULL,
+        role TEXT,
+        zone TEXT,
+        raw_json TEXT NOT NULL
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS clients (
+        client_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        raw_json TEXT NOT NULL
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS workspace_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     cur.execute('''
     CREATE TABLE IF NOT EXISTS tasks (
         task_id TEXT PRIMARY KEY,
@@ -137,6 +162,51 @@ def init_db(reset=False, db_path=None):
 
     conn.commit()
     conn.close()
+
+def sync_workspace_metadata(conn, data_dir=None):
+    """Persist the workspace people and client directories in SQLite."""
+    from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID, CLIENTS
+    data_dir = data_dir or DATA_DIR
+    people_path = os.path.join(data_dir, "people.json")
+    clients_path = os.path.join(data_dir, "clients.json")
+    people = list(PEOPLE_BY_ID.values())
+    clients = CLIENTS
+
+    if os.path.isfile(people_path):
+        with open(people_path, encoding="utf-8") as handle:
+            raw_people = json.load(handle)
+        # Config loader already normalizes the supported people.json structures.
+        conn.execute("DELETE FROM people")
+        for person in people:
+            conn.execute(
+                """INSERT OR REPLACE INTO people
+                   (person_id, org, name, role, zone, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (str(person["id"]), person.get("org"), person.get("name", ""),
+                 person.get("role"), person.get("zone"), json.dumps(person, ensure_ascii=False))
+            )
+        conn.execute(
+            """INSERT OR REPLACE INTO workspace_metadata(key,value)
+               VALUES ('people_source', ?)""", (os.path.abspath(people_path),)
+        )
+
+    if os.path.isfile(clients_path):
+        conn.execute("DELETE FROM clients")
+        for client in clients:
+            if not isinstance(client, dict) or not client.get("id"):
+                continue
+            conn.execute(
+                """INSERT OR REPLACE INTO clients(client_id,name,raw_json)
+                   VALUES (?,?,?)""",
+                (str(client["id"]), str(client.get("name") or client["id"]),
+                 json.dumps(client, ensure_ascii=False))
+            )
+        conn.execute(
+            """INSERT OR REPLACE INTO workspace_metadata(key,value)
+               VALUES ('clients_source', ?)""", (os.path.abspath(clients_path),)
+        )
+    conn.commit()
+
 
 def parse_promise_from_record(r, day):
     # Detect commitments in chats/mails
