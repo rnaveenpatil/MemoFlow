@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID, get_person_org
-from MemoFlow.db import get_connection
+from MemoFlow.db import get_connection, init_db
 from MemoFlow.filter import can_person_read
 from MemoFlow.llm import call_llm
 
@@ -307,6 +307,7 @@ def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
 
 def answer_ask(person, at, ask, db_path=None):
     started = time.monotonic()
+    init_db(reset=False, db_path=db_path)
     conn = get_connection(db_path)
     try:
         org = _person_org(conn, person)
@@ -315,7 +316,14 @@ def answer_ask(person, at, ask, db_path=None):
                 "text": "I can't identify the workspace organization from the loaded people directory.",
                 "sources": []
             })
-        forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
+        if person == "__workspace__":
+            forget_rows = conn.execute(
+                "SELECT what FROM forgets WHERE person = '*'"
+            ).fetchall()
+        else:
+            forget_rows = conn.execute(
+                "SELECT what FROM forgets WHERE person IN (?, '*')", (str(person),)
+            ).fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
         clients = _load_clients(conn)
         tasks = []
