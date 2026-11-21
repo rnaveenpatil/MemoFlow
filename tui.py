@@ -45,7 +45,20 @@ def _import_feedback(conn):
     for name in sorted(os.listdir(feedback_dir)):
         if not name.lower().endswith(".jsonl") or _day_from_name(name) is None:
             continue
-        for fb in _load_jsonl(os.path.join(feedback_dir, name)):
+        feedback_path = os.path.join(feedback_dir, name)
+        with open(feedback_path, "r", encoding="utf-8-sig") as stream:
+            feedback_rows = []
+            for line_no, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    fb = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{name} line {line_no}: {exc}") from exc
+                if not isinstance(fb, dict):
+                    raise ValueError(f"{name} line {line_no}: feedback row must be a JSON object")
+                feedback_rows.append(fb)
+        for fb in feedback_rows:
             values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
                       fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
             exists = conn.execute(
