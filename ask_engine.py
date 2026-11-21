@@ -49,19 +49,31 @@ def _json_from_model(text):
             return None
 
 
-def _load_clients(conn):
-    try:
-        rows = conn.execute(
-            "SELECT client_id, name FROM clients ORDER BY name"
-        ).fetchall()
-        if rows:
-            return [{"id": row["client_id"], "name": row["name"]} for row in rows]
-    except Exception:
-        pass
+def _load_clients(conn, org, person, forgets=None):
+    """Expose only client labels referenced by records this session may read."""
     rows = conn.execute(
-        "SELECT DISTINCT client FROM records WHERE client IS NOT NULL ORDER BY client"
+        "SELECT DISTINCT client, raw_json FROM records WHERE org = ? AND client IS NOT NULL",
+        (org,)
     ).fetchall()
-    return [{"id": row["client"], "name": row["client"]} for row in rows]
+    visible_ids = set()
+    for row in rows:
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if can_person_read(record, person, org, forgets=forgets):
+            visible_ids.add(row["client"])
+    if not visible_ids:
+        return []
+    try:
+        names = {
+            row["client_id"]: row["name"]
+            for row in conn.execute("SELECT client_id, name FROM clients").fetchall()
+        }
+    except Exception:
+        names = {}
+    return [{"id": client_id, "name": names.get(client_id, client_id)}
+            for client_id in sorted(visible_ids)]
 
 
 def _load_people(conn, org=None):
@@ -105,14 +117,22 @@ def _person_org(conn, person_id):
     return row["org"] if row else get_person_org(person_id)
 
 
-def _dataset_time_range(conn, org, cutoff=None):
-    row = conn.execute(
-        "SELECT MIN(at) AS first_at, MAX(at) AS last_at FROM records WHERE org = ? AND (? IS NULL OR at <= ?)",
+def _dataset_time_range(conn, org, person, cutoff=None, forgets=None):
+    """Time hints sent to the model are derived only from readable records."""
+    rows = conn.execute(
+        "SELECT at, raw_json FROM records WHERE org = ? AND (? IS NULL OR at <= ?)",
         (org, cutoff, cutoff)
-    ).fetchone()
-    if not row:
-        return {}
-    return {"first_record_utc": row["first_at"], "last_record_utc": row["last_at"]}
+    ).fetchall()
+    timestamps = []
+    for row in rows:
+        try:
+            record = json.loads(row["raw_json"])
+        except (TypeError, ValueError):
+            continue
+        if can_person_read(record, person, org, forgets=forgets) and row["at"]:
+            timestamps.append(row["at"])
+    return ({"first_record_utc": min(timestamps), "last_record_utc": max(timestamps)}
+            if timestamps else {})
 
 
 def _task_catalog(conn, at, org, person, forgets=None):
@@ -333,19 +353,19 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
                 "sources": []
             })
         if workspace_session:
-            forget_rows = conn.execute(
-                "SELECT what FROM forgets WHERE person = '*'"
-            ).fetchall()
+            # No verified employee identity: apply the union of all recorded forget rules.
+            # This can over-suppress, but cannot accidentally reveal a forgotten fact.
+            forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
         else:
             forget_rows = conn.execute(
                 "SELECT what FROM forgets WHERE person IN (?, '*')", (str(person),)
             ).fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
-        clients = _load_clients(conn)
+        clients = _load_clients(conn, org, person, forgets=forget_terms)
         tasks = []
         people = _load_people(conn, org)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
-        data_window = _dataset_time_range(conn, org, cutoff=cutoff)
+        data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms)
         interpretation, interpretation_call = _interpret(
             ask, at, person, clients, tasks, people, data_window=data_window
         )
