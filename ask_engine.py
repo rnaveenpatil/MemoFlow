@@ -7,7 +7,7 @@ import json
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID, get_person_org
 from MemoFlow.db import get_connection
@@ -91,7 +91,19 @@ def _task_catalog(conn, at, org, person, forgets=None):
 def _interpret(ask, at, person, clients, tasks, people):
     prompt = {
         "question": ask,
-        "asked_at_utc": at,
+        "current_time_utc": at,
+        "asking_person": person,
+        "time_resolution_instructions": (
+            "Determine the time requested by the user. If they mention a date/time or relative "
+            "period (today, yesterday, last Friday, on Nov 4, between Nov 1 and Nov 5, as of "
+            "the end of October), resolve it relative to current_time_utc. Return all boundaries "
+            "in UTC ISO-8601 ending in Z. Use time_mode='on_date' for one calendar day, "
+            "'range' for a bounded period, 'as_of' for a historical snapshot/cutoff, and "
+            "'current' when no date is requested. If the date is genuinely ambiguous, set "
+            "time_clarification to a concise question rather than guessing. For a date-only "
+            "as-of request use end-of-day UTC as the cutoff. Do not use dates beyond the "
+            "records available in the supplied database."
+        ),
         "asking_person": person,
         "available_clients": clients,
         "available_tasks": tasks,
@@ -111,7 +123,12 @@ def _interpret(ask, at, person, clients, tasks, people):
             "search_terms because record authors/owners are stored by ID. Never invent an ID. "
         ),
         "required_json": {
-            "intent": "task_lookup|record_lookup|privacy_request|unknown",
+            "intent": "task_lookup|record_lookup|privacy_request|workspace_update|forget_request|unknown",
+            "time_mode": "current|as_of|on_date|range",
+            "as_of_utc": "UTC timestamp or null",
+            "time_start_utc": "UTC timestamp or null",
+            "time_end_utc": "UTC timestamp or null",
+            "time_clarification": "question or null",
             "client_id": "client id or null",
             "task_id": "task id or null",
             "field": "owner|due|status|summary or null",
@@ -124,13 +141,53 @@ def _interpret(ask, at, person, clients, tasks, people):
             "forget_text": "specific subject to forget or null"
         }
     }
-    result = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=450)
+    result = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=650)
     if not result:
         return None, None
     return _json_from_model(result.get("text")), result
 
 
-def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None):
+def _valid_utc(value):
+    """Validate model-proposed timestamps and normalize them to sortable UTC ISO strings."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _resolve_query_time(interpretation, default_at):
+    """Turn the model's natural-language date interpretation into deterministic SQL bounds."""
+    mode = interpretation.get("time_mode") or "current"
+    if mode not in {"current", "as_of", "on_date", "range"}:
+        mode = "current"
+    if mode == "current":
+        return {"mode": mode, "as_of": default_at, "start": None, "end": default_at}
+    as_of = _valid_utc(interpretation.get("as_of_utc"))
+    start = _valid_utc(interpretation.get("time_start_utc"))
+    end = _valid_utc(interpretation.get("time_end_utc"))
+    if mode == "as_of":
+        cutoff = as_of or end
+        if not cutoff:
+            return None
+        return {"mode": mode, "as_of": cutoff, "start": None, "end": cutoff}
+    if mode == "on_date":
+        if not start or not end or start > end:
+            return None
+        return {"mode": mode, "as_of": end, "start": start, "end": end}
+    if mode == "range":
+        if not start or not end or start > end:
+            return None
+        return {"mode": mode, "as_of": end, "start": start, "end": end}
+    return {"mode": "current", "as_of": default_at, "start": None, "end": default_at}
+
+
+def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None, start_at=None, end_at=None):
     tokens = re.findall(r"[\w-]{3,}", (search_terms or "").lower())
     tokens = list(dict.fromkeys(tokens))[:12]
     if not tokens:
@@ -143,9 +200,11 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
             FROM records_fts
             JOIN records r ON r.id = records_fts.id
             WHERE records_fts MATCH ? AND r.org = ? AND r.at <= ?
+              AND (? IS NULL OR r.at >= ?)
+              AND (? IS NULL OR r.at <= ?)
             ORDER BY rank
             LIMIT 80
-        """, (fts_query, org, at)).fetchall()
+        """, (fts_query, org, at, start_at, start_at, end_at, end_at)).fetchall()
     except Exception:
         return []
 
@@ -234,6 +293,21 @@ def answer_ask(person, at, ask, db_path=None):
                 "sources": []
             })
 
+        if interpretation.get("time_clarification"):
+            return _empty(usage, clarify={
+                "question": interpretation["time_clarification"],
+                "options": []
+            })
+
+        query_time = _resolve_query_time(interpretation, at)
+        if query_time is None:
+            return _empty(usage, clarify={
+                "question": "I couldn't resolve that date reliably. Which exact date or date range do you mean?",
+                "options": []
+            })
+        effective_at = query_time["as_of"]
+        tasks = _task_catalog(conn, effective_at, org, person, forgets=forget_terms)
+
         if interpretation.get("needs_clarification"):
             options = []
             valid = {t["id"]: t for t in tasks}
@@ -307,7 +381,7 @@ def answer_ask(person, at, ask, db_path=None):
             valid_task_ids = {t["id"] for t in tasks}
             if task_id not in valid_task_ids:
                 return _empty(usage, answer={"text": "I couldn't identify a matching task from the available records.", "sources": []})
-            state = _task_state(conn, task_id, at, person, org, forgets=forget_terms)
+            state = _task_state(conn, task_id, effective_at, person, org, forgets=forget_terms)
             if not state:
                 return _empty(usage, answer={"text": "I have no accessible information about that task as of the requested time.", "sources": []})
             record, source_id = state
@@ -348,7 +422,8 @@ def answer_ask(person, at, ask, db_path=None):
                 f"{p['id']} {p['name']}" for p in resolved_people
             )
         candidates = _visible_record_candidates(
-            conn, person, org, at, search_terms, forgets=forget_terms
+            conn, person, org, effective_at, search_terms, forgets=forget_terms,
+            start_at=query_time["start"], end_at=query_time["end"]
         )
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
@@ -356,6 +431,7 @@ def answer_ask(person, at, ask, db_path=None):
         prompt = {
             "question": ask,
             "asked_at_utc": at,
+            "effective_time_window": query_time,
             "evidence": candidates,
             "instructions": (
                 "Answer only from evidence. Resolve conflicts using the newest relevant evidence, "
