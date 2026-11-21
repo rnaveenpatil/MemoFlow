@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from MemoFlow.db import get_connection, init_db
 from MemoFlow.ask_engine import _load_people, _visible_record_candidates, _task_catalog
+from MemoFlow.brief_engine import _model_change_items
+from unittest.mock import patch
 
 
 class ReplayDayBoundaryTests(unittest.TestCase):
@@ -75,6 +77,71 @@ class ReplayDayBoundaryTests(unittest.TestCase):
             dataset_day=1,
         )
         self.assertEqual([task["id"] for task in tasks], ["task-old"])
+
+
+    def test_people_directory_excludes_private_people_from_other_users(self):
+        private_record = {
+            "id": "private1", "day": 1, "org": "orgA", "type": "note",
+            "at": "2026-11-01T11:00:00Z", "author": "bob", "client": "clientA",
+            "visibility": "private", "readers": [], "task_id": None,
+            "title": "private", "owner": None, "due": None, "status": None,
+            "body": "private detail",
+        }
+        self.conn.execute(
+            """INSERT INTO records
+               (id,day,org,type,at,author,client,visibility,title,body,raw_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("private1", 1, "orgA", "note", private_record["at"], "bob",
+             "clientA", "private", "private", "private detail", json.dumps(private_record)),
+        )
+        self.conn.commit()
+        people = _load_people(self.conn, "orgA", dataset_day=1, person="alice")
+        self.assertEqual([p["id"] for p in people], ["alice"])
+
+    def test_model_promise_extraction_accepts_hinglish_and_validates_source(self):
+        evidence = [{
+            "id": "mail1", "type": "chat", "at": "2026-11-02T08:00:00Z",
+            "author": "alice", "author_local_date": "2026-11-02",
+            "title": "Delivery", "body": "kal tak bhej dungi",
+        }]
+        response = {
+            "text": json.dumps({
+                "changes": [],
+                "promises": [{
+                    "owner": "alice", "what": "billing report",
+                    "due": "2026-11-03", "sources": ["mail1"]
+                }]
+            }),
+            "usage": {"input_tokens": 100, "output_tokens": 30, "cost_usd": 0.0, "ms": 5},
+        }
+        with patch("MemoFlow.brief_engine.call_llm", return_value=response):
+            changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
+        self.assertEqual(changes, [])
+        self.assertEqual(len(promises), 1)
+        self.assertEqual(promises[0]["owner"], "alice")
+        self.assertEqual(promises[0]["due"], "2026-11-03")
+        self.assertEqual(promises[0]["sources"], ["mail1"])
+        self.assertEqual(usage["input_tokens"], 100)
+
+    def test_model_cannot_invent_promise_source_or_owner(self):
+        evidence = [{
+            "id": "mail1", "type": "chat", "at": "2026-11-02T08:00:00Z",
+            "author": "alice", "author_local_date": "2026-11-02",
+            "title": "Delivery", "body": "will send",
+        }]
+        response = {
+            "text": json.dumps({
+                "changes": [],
+                "promises": [{
+                    "owner": "bob", "what": "billing report",
+                    "due": "2026-11-03", "sources": ["invented-record"]
+                }]
+            }),
+            "usage": {"input_tokens": 100, "output_tokens": 30, "cost_usd": 0.0, "ms": 5},
+        }
+        with patch("MemoFlow.brief_engine.call_llm", return_value=response):
+            changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
+        self.assertEqual(promises, [])
 
     def test_schema_has_day_provenance_columns(self):
         forget_cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(forgets)")}
