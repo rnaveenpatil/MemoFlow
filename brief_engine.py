@@ -306,8 +306,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         for promise_source, delivery_source in fulfilled_promises:
             delivery = evidence_by_id[delivery_source]
             cur.execute(
-                "UPDATE promises SET fulfilled = 1, fulfilled_day = ? WHERE record_id = ?",
-                (delivery["day"], promise_source)
+                "UPDATE promises SET fulfilled = 1, fulfilled_day = ?, fulfilled_at = ? WHERE record_id = ?",
+                (delivery["day"], delivery["at"], promise_source)
             )
         conn.commit()
 
@@ -389,10 +389,11 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         JOIN records r ON r.id = p.record_id
         WHERE p.client = ? AND p.at <= ?
           AND (? IS NULL OR r.day <= ?)
-          AND (p.fulfilled = 0 OR (p.fulfilled_day IS NOT NULL AND p.fulfilled_day > ?)
-               OR (p.fulfilled = 1 AND p.fulfilled_day IS NULL AND ? IS NOT NULL))
+          AND (p.fulfilled = 0 OR (p.fulfilled_at IS NOT NULL AND p.fulfilled_at > ?)
+               OR (p.fulfilled = 1 AND p.fulfilled_at IS NULL AND ? IS NOT NULL))
         ORDER BY p.at ASC
-        """, (client, meet.get('start', ''), dataset_day, dataset_day, dataset_day, dataset_day))
+        """, (client, meet.get('start', ''), dataset_day, dataset_day,
+              meet.get('start', ''), dataset_day))
         active_promises = []
         for p_row in cur.fetchall():
             try:
