@@ -310,6 +310,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                     "what": promise_row["what"], "due": promise_row["due"],
                     "at": promise_row["at"]
                 })
+                if len(open_promises) >= 15:
+                    break
         model_items, model_promises, fulfilled_promises, model_usage = _model_change_items(
             evidence, corrections, meet_id, client, meeting_start=meet.get('start'),
             open_promises=open_promises, verdicts=verdicts
