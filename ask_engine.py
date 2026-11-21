@@ -98,7 +98,10 @@ def _interpret(ask, at, person, clients, tasks, people):
             "needs_clarification true and return candidate task IDs. Do not guess. "
             "Classify requests for another person's private personal information or private "
             "conversations as privacy_request. Use available_people to resolve names to IDs "
-            "and distinguish people with the same first name."
+            "and distinguish people with the same first name. For every person explicitly mentioned "
+            "in the question, resolve them against available_people and include that person's exact "
+            "ID and full name in resolved_people. Add both the exact ID and useful name tokens to "
+            "search_terms because record authors/owners are stored by ID. Never invent an ID. "
         ),
         "required_json": {
             "intent": "task_lookup|record_lookup|privacy_request|unknown",
@@ -108,7 +111,8 @@ def _interpret(ask, at, person, clients, tasks, people):
             "search_terms": "short search string",
             "needs_clarification": False,
             "clarification": "question or null",
-            "candidate_task_ids": []
+            "candidate_task_ids": [],
+            "resolved_people": [{"id": "known person ID", "name": "known full name"}]
         }
     }
     result = call_llm(json.dumps(prompt, ensure_ascii=False), SYSTEM, max_tokens=450)
@@ -252,7 +256,22 @@ def answer_ask(person, at, ask, db_path=None):
                 matched.append({"phrase": interpretation["client_id"], "id": interpretation["client_id"], "sources": [source_id]})
             return _empty(usage, answer={"text": answer_text, "sources": [source_id]}, matched=matched)
 
+        # Validate every model-resolved person against the loaded workspace directory.
+        # The model may interpret names, but it cannot create identities or grant access.
+        resolved_people = []
+        valid_people = {p["id"]: p for p in people}
+        for item in interpretation.get("resolved_people") or []:
+            if not isinstance(item, dict):
+                continue
+            candidate = valid_people.get(item.get("id"))
+            if candidate and candidate.get("name", "").casefold() == str(item.get("name", "")).casefold():
+                resolved_people.append({"id": candidate["id"], "name": candidate["name"]})
+
         search_terms = interpretation.get("search_terms") or ask
+        if resolved_people:
+            search_terms += " " + " ".join(
+                f"{p['id']} {p['name']}" for p in resolved_people
+            )
         candidates = _visible_record_candidates(conn, person, org, at, search_terms)
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
@@ -292,7 +311,10 @@ def answer_ask(person, at, ask, db_path=None):
         sources = [s for s in (generated.get("sources") or []) if s in allowed]
         if not sources:
             return _empty(usage, answer={"text": "The available records did not support a verifiable answer.", "sources": []})
-        matched = []
+        matched = [
+            {"phrase": p["name"], "id": p["id"], "sources": []}
+            for p in resolved_people
+        ]
         for item in generated.get("matched") or []:
             if not isinstance(item, dict):
                 continue
