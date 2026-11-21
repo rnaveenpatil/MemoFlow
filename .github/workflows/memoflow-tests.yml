@@ -1,0 +1,47 @@
+name: MemoFlow tests
+
+on:
+  push:
+    branches:
+      - feat/simple-file-question-tui
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python modules
+        run: python -m compileall -q .
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+
+  challenge-replay:
+    if: ${{ secrets.LLM_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL_ID: ${{ secrets.LLM_MODEL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Replay public challenge days 1-5
+        run: python3 dataset/tools/run_days.py --cmd "python3 main.py" --days 1-5 --out runs/memoflow
+      - name: Score challenge outputs
+        run: python3 dataset/tools/score.py --run runs/memoflow --days 1-5
+      - name: Upload score and run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memoflow-days-1-5-results
+          path: |
+            runs/memoflow/score.json
+            runs/memoflow/log.jsonl
+            runs/memoflow/day-*/
