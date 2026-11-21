@@ -92,19 +92,19 @@ def _interpret(ask, at, person, clients, tasks, people):
     prompt = {
         "question": ask,
         "current_time_utc": at,
-        "asking_person": person,
         "time_resolution_instructions": (
             "Determine the time requested by the user. If they mention a date/time or relative "
             "period (today, yesterday, last Friday, on Nov 4, between Nov 1 and Nov 5, as of "
             "the end of October), resolve it relative to current_time_utc. Return all boundaries "
-            "in UTC ISO-8601 ending in Z. Use time_mode='on_date' for one calendar day, "
+            "in UTC ISO-8601 ending in Z, interpreting calendar dates in query_timezone. "
+            "Use time_mode='on_date' for one calendar day, "
             "'range' for a bounded period, 'as_of' for a historical snapshot/cutoff, and "
             "'current' when no date is requested. If the date is genuinely ambiguous, set "
             "time_clarification to a concise question rather than guessing. For a date-only "
             "as-of request use end-of-day UTC as the cutoff. Do not use dates beyond the "
             "records available in the supplied database."
         ),
-        "asking_person": person,
+        "query_timezone": "Asia/Kolkata",
         "available_clients": clients,
         "available_tasks": tasks,
         "available_people": people,
@@ -116,7 +116,11 @@ def _interpret(ask, at, person, clients, tasks, people):
             "For record_lookup provide concise search_terms. If multiple tasks are plausible, set "
             "needs_clarification true and return candidate task IDs. Do not guess. "
             "Classify requests for another person's private personal information or private "
-            "conversations as privacy_request. Use available_people to resolve names to IDs "
+            "conversations as privacy_request. Use workspace_update only when the user explicitly "
+            "says remember, save, add, or correct a fact; return update_text with the exact fact. "
+            "Use forget_request when the user explicitly asks to forget/remove something; return "
+            "forget_text with the subject. Do not treat ordinary questions as write instructions. "
+            "Use available_people to resolve names to IDs "
             "and distinguish people with the same first name. For every person explicitly mentioned "
             "in the question, resolve them against available_people and include that person's exact "
             "ID and full name in resolved_people. Add both the exact ID and useful name tokens to "
@@ -173,16 +177,18 @@ def _resolve_query_time(interpretation, default_at):
     end = _valid_utc(interpretation.get("time_end_utc"))
     if mode == "as_of":
         cutoff = as_of or end
-        if not cutoff:
+        if not cutoff or cutoff > default_at:
             return None
         return {"mode": mode, "as_of": cutoff, "start": None, "end": cutoff}
     if mode == "on_date":
-        if not start or not end or start > end:
+        if not start or not end or start > end or start > default_at:
             return None
+        end = min(end, default_at)
         return {"mode": mode, "as_of": end, "start": start, "end": end}
     if mode == "range":
-        if not start or not end or start > end:
+        if not start or not end or start > end or start > default_at:
             return None
+        end = min(end, default_at)
         return {"mode": mode, "as_of": end, "start": start, "end": end}
     return {"mode": "current", "as_of": default_at, "start": None, "end": default_at}
 
@@ -280,7 +286,7 @@ def answer_ask(person, at, ask, db_path=None):
         forget_rows = conn.execute("SELECT what FROM forgets").fetchall()
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
         clients = _load_clients(conn)
-        tasks = _task_catalog(conn, at, org, person, forgets=forget_terms)
+        tasks = []
         people = [{"id": p["id"], "name": p.get("name"), "role": p.get("role")}
                   for p in PEOPLE_BY_ID.values() if p.get("org") == org]
         interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks, people)
@@ -307,6 +313,27 @@ def answer_ask(person, at, ask, db_path=None):
             })
         effective_at = query_time["as_of"]
         tasks = _task_catalog(conn, effective_at, org, person, forgets=forget_terms)
+
+        # Task names/IDs are fetched only after the time boundary is resolved.
+        # This prevents later-day tasks from influencing a historical question.
+        if interpretation.get("intent") == "task_lookup":
+            task_interpretation, task_call = _interpret(ask, at, person, clients, tasks, people)
+            task_usage = _usage(task_call, started)
+            usage = {
+                "input_tokens": usage.get("input_tokens", 0) + task_usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0) + task_usage.get("output_tokens", 0),
+                "cost_usd": round(usage.get("cost_usd", 0) + task_usage.get("cost_usd", 0), 6),
+                "ms": max(0, int((time.monotonic() - started) * 1000))
+            }
+            if not task_interpretation:
+                return _empty(usage, answer={
+                    "text": "I couldn't identify the task reliably from the records available at that date.",
+                    "sources": []
+                })
+            for key in ("intent", "task_id", "field", "needs_clarification",
+                        "clarification", "candidate_task_ids", "client_id"):
+                if key in task_interpretation:
+                    interpretation[key] = task_interpretation[key]
 
         if interpretation.get("needs_clarification"):
             options = []
