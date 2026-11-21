@@ -49,11 +49,11 @@ def _json_from_model(text):
             return None
 
 
-def _load_clients(conn, org, person, forgets=None):
+def _load_clients(conn, org, person, forgets=None, dataset_day=None):
     """Expose only client labels referenced by records this session may read."""
     rows = conn.execute(
-        "SELECT DISTINCT client, raw_json FROM records WHERE org = ? AND client IS NOT NULL",
-        (org,)
+        "SELECT DISTINCT client, raw_json FROM records WHERE org = ? AND client IS NOT NULL AND (? IS NULL OR day <= ?)",
+        (org, dataset_day, dataset_day)
     ).fetchall()
     visible_ids = set()
     for row in rows:
@@ -117,11 +117,11 @@ def _person_org(conn, person_id):
     return row["org"] if row else get_person_org(person_id)
 
 
-def _dataset_time_range(conn, org, person, cutoff=None, forgets=None):
+def _dataset_time_range(conn, org, person, cutoff=None, forgets=None, dataset_day=None):
     """Time hints sent to the model are derived only from readable records."""
     rows = conn.execute(
-        "SELECT at, raw_json FROM records WHERE org = ? AND (? IS NULL OR at <= ?)",
-        (org, cutoff, cutoff)
+        "SELECT at, raw_json FROM records WHERE org = ? AND (? IS NULL OR at <= ?) AND (? IS NULL OR day <= ?)",
+        (org, cutoff, cutoff, dataset_day, dataset_day)
     ).fetchall()
     timestamps = []
     for row in rows:
@@ -135,13 +135,14 @@ def _dataset_time_range(conn, org, person, cutoff=None, forgets=None):
             if timestamps else {})
 
 
-def _task_catalog(conn, at, org, person, forgets=None):
+def _task_catalog(conn, at, org, person, forgets=None, dataset_day=None):
     rows = conn.execute("""
-        SELECT task_id, title, client, raw_json
+        SELECT task_id, title, client, owner, due, status, raw_json
         FROM records
         WHERE type = 'task' AND org = ? AND at <= ? AND task_id IS NOT NULL
+          AND (? IS NULL OR day <= ?)
         ORDER BY at DESC
-    """, (org, at)).fetchall()
+    """, (org, at, dataset_day, dataset_day)).fetchall()
     by_id = {}
     for row in rows:
         task_id = row["task_id"]
@@ -156,7 +157,10 @@ def _task_catalog(conn, at, org, person, forgets=None):
         by_id[task_id] = {
             "id": task_id,
             "title": row["title"] or "",
-            "client": row["client"]
+            "client": row["client"],
+            "owner": row["owner"],
+            "due": row["due"],
+            "status": row["status"]
         }
     return list(by_id.values())
 
@@ -269,7 +273,7 @@ def _resolve_query_time(interpretation, default_at):
     return {"mode": "current", "as_of": default_at, "start": None, "end": default_at}
 
 
-def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None, start_at=None, end_at=None):
+def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, forgets=None, start_at=None, end_at=None, dataset_day=None):
     tokens = re.findall(r"[\w-]{3,}", (search_terms or "").lower())
     tokens = list(dict.fromkeys(tokens))[:12]
     if not tokens:
@@ -284,9 +288,10 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
             WHERE records_fts MATCH ? AND r.org = ? AND r.at <= ?
               AND (? IS NULL OR r.at >= ?)
               AND (? IS NULL OR r.at <= ?)
+              AND (? IS NULL OR r.day <= ?)
             ORDER BY rank
             LIMIT 80
-        """, (fts_query, org, at, start_at, start_at, end_at, end_at)).fetchall()
+        """, (fts_query, org, at, start_at, start_at, end_at, end_at, dataset_day, dataset_day)).fetchall()
     except Exception:
         return []
 
@@ -313,12 +318,13 @@ def _visible_record_candidates(conn, person, org, at, search_terms, limit=12, fo
     return out
 
 
-def _task_state(conn, task_id, at, person, org, forgets=None):
+def _task_state(conn, task_id, at, person, org, forgets=None, dataset_day=None):
     row = conn.execute("""
         SELECT id, raw_json FROM records
         WHERE type = 'task' AND task_id = ? AND org = ? AND at <= ?
+          AND (? IS NULL OR day <= ?)
         ORDER BY at DESC LIMIT 1
-    """, (task_id, org, at)).fetchone()
+    """, (task_id, org, at, dataset_day, dataset_day)).fetchone()
     if not row:
         return None
     try:
@@ -340,7 +346,7 @@ def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
     }
 
 
-def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
+def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=None):
     started = time.monotonic()
     init_db(reset=False, db_path=db_path)
     conn = get_connection(db_path)
@@ -365,7 +371,14 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
         tasks = []
         people = _load_people(conn, org)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
-        data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms)
+        try:
+            dataset_day = int(dataset_day) if dataset_day is not None else None
+        except (TypeError, ValueError):
+            dataset_day = None
+        if dataset_day is not None and not 1 <= dataset_day <= 15:
+            return _empty(_usage(None, started), answer={"text": "Dataset day must be between 1 and 15.", "sources": []})
+        clients = _load_clients(conn, org, person, forgets=forget_terms, dataset_day=dataset_day)
+        data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms, dataset_day=dataset_day)
         interpretation, interpretation_call = _interpret(
             ask, at, person, clients, tasks, people, data_window=data_window
         )
@@ -401,7 +414,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
             effective_at = min(effective_at, cutoff)
             query_time["as_of"] = effective_at
             query_time["end"] = min(query_time["end"], cutoff) if query_time.get("end") else cutoff
-        tasks = _task_catalog(conn, effective_at, org, person, forgets=forget_terms)
+        tasks = _task_catalog(conn, effective_at, org, person, forgets=forget_terms, dataset_day=dataset_day)
 
         # Task names/IDs are fetched only after the time boundary is resolved.
         # This prevents later-day tasks from influencing a historical question.
@@ -499,7 +512,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
             valid_task_ids = {t["id"] for t in tasks}
             if task_id not in valid_task_ids:
                 return _empty(usage, answer={"text": "I couldn't identify a matching task from the available records.", "sources": []})
-            state = _task_state(conn, task_id, effective_at, person, org, forgets=forget_terms)
+            state = _task_state(conn, task_id, effective_at, person, org, forgets=forget_terms, dataset_day=dataset_day)
             if not state:
                 return _empty(usage, answer={"text": "I have no accessible information about that task as of the requested time.", "sources": []})
             record, source_id = state
@@ -541,7 +554,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None):
             )
         candidates = _visible_record_candidates(
             conn, person, org, effective_at, search_terms, forgets=forget_terms,
-            start_at=query_time["start"], end_at=query_time["end"]
+            start_at=query_time["start"], end_at=query_time["end"], dataset_day=dataset_day
         )
         if not candidates:
             return _empty(usage, answer={"text": "I have nothing reliable on that in the records available to me.", "sources": []})
