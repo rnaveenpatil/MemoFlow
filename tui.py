@@ -78,8 +78,8 @@ def _import_feedback(conn):
                     (fb.get("person") or "*", fb["words"])
                 ).fetchone()
                 if not forget_exists:
-                    conn.execute("INSERT INTO forgets(person,what) VALUES(?,?)",
-                                 (fb.get("person") or "*", fb["words"]))
+                    conn.execute("INSERT INTO forgets(person,what,day) VALUES(?,?,?)",
+                                 (fb.get("person") or "*", fb["words"], fb.get("day")))
             added += 1
     return added
 
