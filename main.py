@@ -13,47 +13,99 @@ from MemoFlow.brief_engine import generate_briefs
 from MemoFlow.ask_engine import answer_ask
 
 
+def _read_jsonl(path):
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict) or not record.get("id"):
+                raise ValueError(f"{path}:{line_number}: expected a JSON object with an id")
+            yield record
+
+
+def _ingest_feedback(conn, feedback_day):
+    path = os.path.join(DATA_DIR, "feedback", f"day-{feedback_day:02d}.jsonl")
+    if not os.path.isfile(path):
+        return 0
+    count = 0
+    for fb in _read_jsonl(path):
+        values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
+                  fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
+        exists = conn.execute(
+            """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
+               AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
+            values
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            """INSERT INTO feedback
+            (day, person, type, words, meeting, topic, verdict)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""", values
+        )
+        if fb.get("type") == "forget":
+            forget_exists = conn.execute(
+                "SELECT 1 FROM forgets WHERE person = ? AND what = ? LIMIT 1",
+                (fb.get("person"), fb.get("words"))
+            ).fetchone()
+            if not forget_exists:
+                conn.execute(
+                    "INSERT INTO forgets (person, what) VALUES (?, ?)",
+                    (fb.get("person"), fb.get("words"))
+                )
+        count += 1
+    return count
+
+
 def handle_ingest(day):
+    if day < 1:
+        raise ValueError("Day must be a positive integer.")
     init_db(reset=(day == 1))
     conn = get_connection()
-    cur = conn.cursor()
+    imported = {}
+    feedback_count = 0
+    try:
+        day_dir = os.path.join(DATA_DIR, "days")
+        missing = [
+            d for d in range(1, day + 1)
+            if not os.path.isfile(os.path.join(day_dir, f"day-{d:02d}.jsonl"))
+            and not conn.execute("SELECT 1 FROM records WHERE day = ? LIMIT 1", (d,)).fetchone()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "Cannot ingest cumulatively; missing day file(s): "
+                + ", ".join(str(d) for d in missing)
+            )
 
-    day_file = os.path.join(DATA_DIR, "days", f"day-{day:02d}.jsonl")
-    count = 0
-    if os.path.isfile(day_file):
-        with open(day_file, "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if line:
-                    insert_record(conn, json.loads(line), day)
-                    count += 1
-
-    if day > 1:
-        feedback_file = os.path.join(DATA_DIR, "feedback", f"day-{day-1:02d}.jsonl")
-        if os.path.isfile(feedback_file):
-            with open(feedback_file, "r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
+        for current_day in range(1, day + 1):
+            path = os.path.join(day_dir, f"day-{current_day:02d}.jsonl")
+            count = 0
+            if os.path.isfile(path):
+                for record in _read_jsonl(path):
+                    exists = conn.execute(
+                        "SELECT 1 FROM records WHERE id = ?", (record["id"],)
+                    ).fetchone()
+                    if exists:
                         continue
-                    fb = json.loads(line)
-                    cur.execute(
-                        """INSERT INTO feedback
-                        (day, person, type, words, meeting, topic, verdict)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (fb.get("day"), fb.get("person"), fb.get("type"),
-                         fb.get("words"), fb.get("meeting"), fb.get("topic"),
-                         fb.get("verdict")),
-                    )
-                    if fb.get("type") == "forget":
-                        cur.execute(
-                            "INSERT INTO forgets (person, what) VALUES (?, ?)",
-                            (fb.get("person"), fb.get("words")),
-                        )
-
-    conn.commit()
+                    insert_record(conn, record, current_day)
+                    count += 1
+            imported[current_day] = count
+            if current_day > 1:
+                feedback_count += _ingest_feedback(conn, current_day - 1)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     conn.close()
-    print(json.dumps({"ok": True, "day": day, "records": count}))
+    print(json.dumps({
+        "ok": True,
+        "through_day": day,
+        "new_records_by_day": imported,
+        "new_feedback": feedback_count
+    }))
 
 
 def handle_brief(person, date):
@@ -79,7 +131,7 @@ def main():
     )
     sub = ap.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("ingest", help="Ingest one bundled dataset day")
+    s = sub.add_parser("ingest", help="Cumulatively ingest bundled data through a day")
     s.add_argument("--day", type=int, required=True)
 
     s = sub.add_parser("brief", help="Generate a person's daily brief")
