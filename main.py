@@ -31,7 +31,7 @@ def _ingest_feedback(conn, feedback_day):
         return 0
     count = 0
     for fb in _read_jsonl(path):
-        values = (fb.get("day"), fb.get("person"), fb.get("type"), fb.get("words"),
+        values = (fb.get("day", feedback_day), fb.get("person"), fb.get("type"), fb.get("words"),
                   fb.get("meeting"), fb.get("topic"), fb.get("verdict"))
         exists = conn.execute(
             """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
@@ -53,7 +53,7 @@ def _ingest_feedback(conn, feedback_day):
             if not forget_exists:
                 conn.execute(
                     "INSERT INTO forgets (person, what, day) VALUES (?, ?, ?)",
-                    (fb.get("person"), fb.get("words"), feedback_day)
+                    (fb.get("person"), fb.get("words"), fb.get("day", feedback_day))
                 )
         count += 1
     return count
@@ -79,6 +79,24 @@ def handle_ingest(day):
                 "Cannot ingest cumulatively; missing day file(s): "
                 + ", ".join(str(d) for d in missing)
             )
+
+        # Replaying an earlier day must not inherit future rows from a previous run.
+        future_ids = [row["id"] for row in conn.execute(
+            "SELECT id FROM records WHERE day > ?", (day,)
+        ).fetchall()]
+        if future_ids:
+            conn.executemany("DELETE FROM records_fts WHERE id = ?", [(rid,) for rid in future_ids])
+            conn.execute("DELETE FROM records WHERE day > ?", (day,))
+            conn.execute("DELETE FROM task_changes WHERE day > ?", (day,))
+            conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
+            conn.execute("DELETE FROM feedback WHERE day > ?", (day,))
+            conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
+            conn.execute("DELETE FROM promises WHERE day > ?", (day,))
+            conn.execute(
+                "UPDATE promises SET fulfilled = 0, fulfilled_day = NULL "
+                "WHERE fulfilled_day > ?", (day,)
+            )
+            conn.execute("DELETE FROM tasks WHERE last_day > ?", (day,))
 
         for current_day in range(1, day + 1):
             path = os.path.join(day_dir, f"day-{current_day:02d}.jsonl")
