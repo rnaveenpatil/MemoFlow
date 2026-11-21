@@ -124,6 +124,33 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         self.assertEqual(promises[0]["sources"], ["mail1"])
         self.assertEqual(usage["input_tokens"], 100)
 
+    def test_model_can_mark_prior_promise_fulfilled_by_later_evidence(self):
+        evidence = [{
+            "id": "delivery1", "type": "mail", "at": "2026-11-05T10:00:00Z",
+            "author": "alice", "author_local_date": "2026-11-05",
+            "title": "Delivery", "body": "The billing report has been sent.",
+        }]
+        response = {
+            "text": json.dumps({
+                "changes": [],
+                "promises": [],
+                "fulfilled_promises": [{
+                    "source": "promise1", "fulfilled_by": "delivery1"
+                }]
+            }),
+            "usage": {"input_tokens": 100, "output_tokens": 30, "cost_usd": 0.0, "ms": 5},
+        }
+        open_promises = [{
+            "source": "promise1", "owner": "alice", "what": "billing report",
+            "due": "2026-11-04", "at": "2026-11-03T10:00:00Z",
+        }]
+        with patch("MemoFlow.brief_engine.call_llm", return_value=response):
+            changes, promises, fulfilled, usage = _model_change_items(
+                evidence, [], "meeting2", "clientA", open_promises=open_promises
+            )
+        self.assertEqual(promises, [])
+        self.assertEqual(fulfilled, [("promise1", "delivery1")])
+
     def test_model_cannot_invent_promise_source_or_owner(self):
         evidence = [{
             "id": "mail1", "type": "chat", "at": "2026-11-02T08:00:00Z",
