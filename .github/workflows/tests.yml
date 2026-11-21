@@ -6,7 +6,7 @@ on:
       - feat/simple-file-question-tui
   pull_request:
     branches:
-      - feat/simple-file-question-tui
+      - main
   workflow_dispatch:
 
 jobs:
