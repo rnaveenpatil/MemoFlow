@@ -210,9 +210,8 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
 
         # (C) Check task changes
         cur.execute('''
-        SELECT tc.*, r.raw_json, t.title as current_title FROM task_changes tc
+        SELECT tc.*, r.raw_json FROM task_changes tc
         JOIN records r ON tc.record_id = r.id
-        LEFT JOIN tasks t ON tc.task_id = t.task_id
         WHERE tc.client = ? AND r.org = ? AND tc.at >= ? AND tc.at <= ?
         AND (? IS NULL OR r.day <= ?)
         AND tc.from_val IS NOT NULL AND tc.to_val IS NOT NULL AND tc.from_val != tc.to_val
@@ -226,7 +225,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             if not can_person_read(rec, person, person_org, forgets=forgets):
                 continue
             field = row['field']
-            title = row['title'] or row['current_title'] or 'Task'
+            title = row['title'] or rec.get('title') or 'Task'
             from_v = row['from_val']
             to_v = row['to_val']
             rec_id = row['record_id']
@@ -290,10 +289,12 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         cur.execute("""
         SELECT p.*, r.raw_json FROM promises p
         JOIN records r ON r.id = p.record_id
-        WHERE p.client = ? AND p.fulfilled = 0 AND p.at <= ?
+        WHERE p.client = ? AND p.at <= ?
           AND (? IS NULL OR r.day <= ?)
+          AND (p.fulfilled = 0 OR (p.fulfilled_day IS NOT NULL AND p.fulfilled_day > ?)
+               OR (p.fulfilled = 1 AND p.fulfilled_day IS NULL AND ? IS NOT NULL))
         ORDER BY p.at ASC
-        """, (client, meet.get('start', ''), dataset_day, dataset_day))
+        """, (client, meet.get('start', ''), dataset_day, dataset_day, dataset_day, dataset_day))
         active_promises = []
         for p_row in cur.fetchall():
             try:
