@@ -86,17 +86,17 @@ def handle_ingest(day):
         ).fetchall()]
         if future_ids:
             conn.executemany("DELETE FROM records_fts WHERE id = ?", [(rid,) for rid in future_ids])
-            conn.execute("DELETE FROM records WHERE day > ?", (day,))
-            conn.execute("DELETE FROM task_changes WHERE day > ?", (day,))
-            conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
-            conn.execute("DELETE FROM feedback WHERE day > ?", (day,))
-            conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
-            conn.execute("DELETE FROM promises WHERE day > ?", (day,))
-            conn.execute(
-                "UPDATE promises SET fulfilled = 0, fulfilled_day = NULL "
-                "WHERE fulfilled_day > ?", (day,)
-            )
-            conn.execute("DELETE FROM tasks WHERE last_day > ?", (day,))
+        conn.execute("DELETE FROM records WHERE day > ?", (day,))
+        conn.execute("DELETE FROM task_changes WHERE day > ?", (day,))
+        conn.execute("DELETE FROM meetings WHERE day > ?", (day,))
+        conn.execute("DELETE FROM feedback WHERE day > ?", (day,))
+        conn.execute("DELETE FROM forgets WHERE day > ?", (day,))
+        conn.execute("DELETE FROM promises WHERE day > ?", (day,))
+        conn.execute(
+            "UPDATE promises SET fulfilled = 0, fulfilled_day = NULL "
+            "WHERE fulfilled_day > ?", (day,)
+        )
+        conn.execute("DELETE FROM tasks WHERE last_day > ?", (day,))
 
         for current_day in range(1, day + 1):
             path = os.path.join(day_dir, f"day-{current_day:02d}.jsonl")
