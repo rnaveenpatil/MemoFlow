@@ -47,7 +47,7 @@ def _day_number(path):
     )
 
 
-def _candidate_day_paths(selected_path, day):
+def _candidate_day_paths(selected_path, day, data_dir=None):
     filename = os.path.basename(selected_path)
     match = _DAY_RE.search(filename)
     if not match:
@@ -63,8 +63,9 @@ def _candidate_day_paths(selected_path, day):
         f"day_{day:02d}.jsonl",
         f"{prefix}day-{day:02d}{suffix}",
     ]
+    data_dir = data_dir or DATA_DIR
     directories = [os.path.dirname(os.path.abspath(selected_path)),
-                   os.path.join(DATA_DIR, "days")]
+                   os.path.join(data_dir, "days"), data_dir]
     seen = set()
     for directory in directories:
         for name in names:
@@ -159,9 +160,10 @@ def _ingest_cumulative(selected_path):
         if target_day < 1:
             raise ValueError("Dataset day must be at least 1.")
 
+        metadata_dir = _find_metadata_dir(selected_path)
         paths_by_day = {}
         for day in range(1, target_day + 1):
-            matches = list(_candidate_day_paths(selected_path, day))
+            matches = list(_candidate_day_paths(selected_path, day, data_dir=metadata_dir))
             if day == target_day:
                 selected = os.path.abspath(selected_path)
                 if selected not in matches:
@@ -173,7 +175,6 @@ def _ingest_cumulative(selected_path):
         init_db(reset=False)
         conn = get_connection()
         try:
-            metadata_dir = _find_metadata_dir(selected_path)
             sync_workspace_metadata(conn, data_dir=metadata_dir)
             existing_days = {
                 row["day"] for row in conn.execute(
@@ -244,6 +245,7 @@ def _ingest_cumulative(selected_path):
 def _ask_loop(person):
     print("\nMemoFlow is ready. Chat naturally. Mention people and clients by name.")
     print("Commands: /file to load more data, /exit to quit.")
+    print("Try: 'What happened on Nov 4?', 'What was true as of Friday?', or 'Summarize Nov 1 to Nov 5'.")
     while True:
         try:
             question = input("\nYou: ").strip()
