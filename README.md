@@ -11,10 +11,13 @@ python main.py
 ```
 
 The interactive terminal UI lets you:
-1. Select a `.jsonl` file from a file picker (or enter its path if the picker is unavailable).
-2. Enter the dataset day number and import its records into the local SQLite database.
-3. Select your person ID from the people loaded from the dataset.
-4. Type questions and receive grounded answers with source record IDs.
+1. Select a day file such as `day-01.jsonl` or `day-03.jsonl`.
+2. MemoFlow detects the day from the filename; no manual day number is required.
+3. Selecting Day N imports the available files for Days 1 through N in chronological order. It never reads later-day files. Missing earlier files cause a clear error rather than silently creating incomplete history.
+4. Previously ingested days remain in the database. Re-importing the same records does not create duplicate records.
+5. Select your person ID and type questions; answers include source record IDs.
+
+Keep the earlier day files together in the selected file's folder, or place them under `data/days/`. Filenames must contain a day marker such as `day-01.jsonl`, `day-2.jsonl`, or `Day 3.jsonl`. The TUI will not guess a day from file selection order.
 
 Commands inside question mode:
 - `/person` — switch the person asking
