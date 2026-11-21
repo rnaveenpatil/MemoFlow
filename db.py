@@ -164,20 +164,37 @@ def init_db(reset=False, db_path=None):
     conn.close()
 
 def sync_workspace_metadata(conn, data_dir=None):
-    """Persist the workspace people and client directories in SQLite."""
+    """Persist people and client directories from the selected workspace pack."""
     from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID, CLIENTS
     data_dir = data_dir or DATA_DIR
     people_path = os.path.join(data_dir, "people.json")
     clients_path = os.path.join(data_dir, "clients.json")
-    people = list(PEOPLE_BY_ID.values())
-    clients = CLIENTS
 
     if os.path.isfile(people_path):
         with open(people_path, encoding="utf-8") as handle:
             raw_people = json.load(handle)
-        # Config loader already normalizes the supported people.json structures.
+        if isinstance(raw_people, list):
+            groups = [("default", raw_people)]
+        elif isinstance(raw_people, dict) and isinstance(raw_people.get("people"), list):
+            groups = [(raw_people.get("org") or raw_people.get("id") or "default",
+                       raw_people["people"])]
+        elif isinstance(raw_people, dict):
+            groups = list(raw_people.items())
+        else:
+            raise ValueError("people.json must be a list or organization mapping")
+
+        normalized_people = []
+        for org_id, group in groups:
+            members = group if isinstance(group, list) else group.get("people", [])
+            for item in members:
+                if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
+                    continue
+                person = dict(item)
+                person["org"] = person.get("org") or org_id
+                normalized_people.append(person)
+
         conn.execute("DELETE FROM people")
-        for person in people:
+        for person in normalized_people:
             conn.execute(
                 """INSERT OR REPLACE INTO people
                    (person_id, org, name, role, zone, raw_json)
@@ -191,8 +208,14 @@ def sync_workspace_metadata(conn, data_dir=None):
         )
 
     if os.path.isfile(clients_path):
+        with open(clients_path, encoding="utf-8") as handle:
+            raw_clients = json.load(handle)
+        if isinstance(raw_clients, dict):
+            raw_clients = raw_clients.get("clients", [])
+        if not isinstance(raw_clients, list):
+            raise ValueError("clients.json must contain a list")
         conn.execute("DELETE FROM clients")
-        for client in clients:
+        for client in raw_clients:
             if not isinstance(client, dict) or not client.get("id"):
                 continue
             conn.execute(
@@ -206,6 +229,7 @@ def sync_workspace_metadata(conn, data_dir=None):
                VALUES ('clients_source', ?)""", (os.path.abspath(clients_path),)
         )
     conn.commit()
+
 
 
 def parse_promise_from_record(r, day):
