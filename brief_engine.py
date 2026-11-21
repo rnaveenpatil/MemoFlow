@@ -137,7 +137,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
     cur.execute("SELECT what FROM forgets WHERE person IN (?, '*') AND (day IS NULL OR day <= ?)", (person, dataset_day))
     forgets = [r['what'] for r in cur.fetchall()]
 
-    cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference" AND (? IS NULL OR day <= ?)', (person, dataset_day, dataset_day))
+    cur.execute('SELECT words FROM feedback WHERE person = ? AND type = "preference" AND (? IS NULL OR available_day <= ?)', (person, dataset_day, dataset_day))
     prefs = [r['words'].lower() for r in cur.fetchall()]
     skip_newsletters = any('newsletter' in p for p in prefs)
     
@@ -147,7 +147,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         if m:
             max_changed = int(m.group(1))
 
-    cur.execute('SELECT words, meeting FROM feedback WHERE person = ? AND type = "correction" AND (? IS NULL OR day <= ?)', (person, dataset_day, dataset_day))
+    cur.execute('SELECT words, meeting FROM feedback WHERE person = ? AND type = "correction" AND (? IS NULL OR available_day <= ?)', (person, dataset_day, dataset_day))
     corrections = cur.fetchall()
 
     # 2. Find meetings for this person on date
