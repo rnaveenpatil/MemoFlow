@@ -93,6 +93,48 @@ def _load_jsonl(path):
     return records
 
 
+def _ingest_feedback(conn, feedback_day):
+    feedback_path = os.path.join(DATA_DIR, "feedback", f"day-{feedback_day:02d}.jsonl")
+    if not os.path.isfile(feedback_path):
+        return 0
+    imported = 0
+    with open(feedback_path, "r", encoding="utf-8-sig") as handle:
+        for line_number, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            feedback = json.loads(line)
+            values = (
+                feedback.get("day"), feedback.get("person"), feedback.get("type"),
+                feedback.get("words"), feedback.get("meeting"), feedback.get("topic"),
+                feedback.get("verdict")
+            )
+            exists = conn.execute(
+                """SELECT 1 FROM feedback WHERE day IS ? AND person IS ? AND type IS ?
+                   AND words IS ? AND meeting IS ? AND topic IS ? AND verdict IS ? LIMIT 1""",
+                values
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                """INSERT INTO feedback
+                   (day, person, type, words, meeting, topic, verdict)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""", values
+            )
+            if feedback.get("type") == "forget":
+                forget_exists = conn.execute(
+                    "SELECT 1 FROM forgets WHERE person = ? AND what = ? LIMIT 1",
+                    (feedback.get("person"), feedback.get("words"))
+                ).fetchone()
+                if not forget_exists:
+                    conn.execute(
+                        "INSERT INTO forgets (person, what) VALUES (?, ?)",
+                        (feedback.get("person"), feedback.get("words"))
+                    )
+            imported += 1
+    return imported
+
+
 def _ingest_cumulative(selected_path):
     if not selected_path or not os.path.isfile(selected_path):
         print("File not found. Select a valid JSONL file.")
@@ -135,6 +177,7 @@ def _ingest_cumulative(selected_path):
                 )
 
             imported = {}
+            imported_feedback = 0
             for day in range(1, target_day + 1):
                 path = paths_by_day.get(day)
                 if not path:
@@ -152,6 +195,8 @@ def _ingest_cumulative(selected_path):
                     insert_record(conn, record, day)
                     added += 1
                 imported[day] = added
+                if day > 1:
+                    imported_feedback += _ingest_feedback(conn, day - 1)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -164,6 +209,7 @@ def _ingest_cumulative(selected_path):
         print(f"\nCumulative import complete through Day {target_day}.")
         print(summary)
         print(f"New records imported: {total}")
+        print(f"New feedback entries imported: {imported_feedback}")
         print("No future-day files were read.")
         return True
     except (OSError, ValueError) as exc:
