@@ -1,6 +1,5 @@
 """Database management with SQLite and SQLite FTS5 for MemoFlow."""
-import sqlite3, json, os, re
-from datetime import datetime, timedelta
+import sqlite3, json, os
 from MemoFlow.config import DB_PATH, ZONES, get_person_zone
 
 def get_connection(db_path=None):
@@ -261,79 +260,6 @@ def sync_workspace_metadata(conn, data_dir=None):
 
 
 
-def parse_promise_from_record(r, day):
-    # Detect commitments in chats/mails
-    # e.g., "the checkout copy kal tak bhej dunga"
-    # "Will share the API spec for the TMS feed by EOD today."
-    # "the returns page copy next Monday tak share kar dungi/dunga, pakka."
-    body = (r.get('body') or '') + ' ' + (r.get('subject') or '')
-    author = r.get('author')
-    client = r.get('client')
-    at_str = r.get('at', '')
-    rec_id = r.get('id')
-
-    if not body or not author or not client:
-        return None
-
-    # Calculate record date
-    rec_dt = None
-    try:
-        rec_dt = datetime.strptime(at_str[:19], '%Y-%m-%dT%H:%M:%S')
-        # Relative promises such as "tomorrow" are interpreted in the author's time zone.
-        rec_dt += ZONES.get(get_person_zone(author), ZONES['UTC'])
-    except (TypeError, ValueError):
-        pass
-
-    what = None
-    due = None
-
-    # Pattern 1: "... kal tak bhej dunga" or "... kal tak"
-    m1 = re.search(r'(the [^,.\n]+?)\s+kal tak', body, re.I)
-    if m1 and rec_dt:
-        what = m1.group(1).strip()
-        due = (rec_dt + timedelta(days=1)).strftime('%Y-%m-%d')
-
-    # Pattern 2: "by EOD today" or "by Thursday"
-    if not what:
-        m2 = re.search(r'Will share (the [^,.\n]+?)\s+by EOD today', body, re.I)
-        if m2 and rec_dt:
-            what = m2.group(1).strip()
-            due = rec_dt.strftime('%Y-%m-%d')
-
-    # Pattern 3: "... next Monday tak"
-    if not what:
-        m3 = re.search(r'(the [^,.\n]+?)\s+next Monday tak', body, re.I)
-        if m3 and rec_dt:
-            what = m3.group(1).strip()
-            # Find next monday
-            days_ahead = 7 - rec_dt.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            due = (rec_dt + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
-
-    # Pattern 4: "I will send ... by Thursday"
-    if not what:
-        m4 = re.search(r'I will send (the [^,.\n]+?)\s+by Thursday', body, re.I)
-        if m4 and rec_dt:
-            what = m4.group(1).strip()
-            # Thursday in the same week
-            thurs_offset = 3 - rec_dt.weekday()
-            if thurs_offset < 0:
-                thurs_offset += 7
-            due = (rec_dt + timedelta(days=thurs_offset)).strftime('%Y-%m-%d')
-
-    if what and due:
-        return {
-            'record_id': rec_id,
-            'client': client,
-            'owner': author,
-            'what': what,
-            'due': due,
-            'day': day,
-            'at': at_str
-        }
-    return None
-
 def insert_record(conn, r, day):
     cur = conn.cursor()
     change = r.get('change') or {}
@@ -459,29 +385,3 @@ def insert_record(conn, r, day):
             r.get('id'),
             day
         ))
-
-    # Check for promises
-    p_info = parse_promise_from_record(r, day)
-    if p_info:
-        cur.execute('''
-        INSERT OR REPLACE INTO promises (record_id, client, owner, what, due, day, at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            p_info['record_id'],
-            p_info['client'],
-            p_info['owner'],
-            p_info['what'],
-            p_info['due'],
-            p_info['day'],
-            p_info['at']
-        ))
-
-    # Check for promise fulfillment / delivery
-    # e.g. "Sharing the UTM sheet as promised" or "delivered the revised banner set"
-    body = (r.get('body') or '') + ' ' + (r.get('subject') or '')
-    if 'as promised' in body.lower() or 'delivered' in body.lower():
-        cur.execute('SELECT record_id, what FROM promises WHERE client = ? AND fulfilled = 0', (r.get('client'),))
-        for prom in cur.fetchall():
-            what_kw = prom['what'].replace('the ', '').strip().lower()
-            if what_kw in body.lower():
-                cur.execute('UPDATE promises SET fulfilled = 1, fulfilled_day = ? WHERE record_id = ?', (day, prom['record_id']))
