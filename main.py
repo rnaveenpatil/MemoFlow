@@ -128,7 +128,7 @@ def handle_forget(person, what):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="MemoFlow: workspace memory assistant. Run without a command to open the interactive UI."
+        description="MemoFlow: workspace memory assistant. Run without a command to open the interactive terminal chat."
     )
     sub = ap.add_subparsers(dest="cmd")
 
@@ -148,7 +148,7 @@ def main():
     s.add_argument("--person", required=True)
     s.add_argument("--what", required=True)
 
-    sub.add_parser("tui", help="Open the interactive file-and-question UI")
+    sub.add_parser("tui", help="Open the interactive terminal chat")
 
     args = ap.parse_args()
 
