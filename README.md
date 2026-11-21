@@ -2,7 +2,7 @@
 
 MemoFlow is a lightweight, high-performance meeting assistant built with **Python + SQLite (with FTS5 full-text search)**. It processes workspace communication records, tracks task and document states across days, generates client meeting briefs, and answers ad-hoc questions with privacy boundaries and source citations.
 
-## Quick start: interactive mode
+## Quick start: chat-first mode
 
 Run from the MemoFlow project directory:
 
@@ -10,21 +10,19 @@ Run from the MemoFlow project directory:
 python main.py
 ```
 
-The interactive terminal UI lets you:
-1. Select a day file such as `day-01.jsonl` or `day-03.jsonl`.
-2. MemoFlow detects the day from the filename; no manual day number is required.
-3. Selecting Day N imports the available files for Days 1 through N in chronological order. It never reads later-day files. Missing earlier files cause a clear error rather than silently creating incomplete history.
-4. Previously ingested days remain in the database. Re-importing the same records does not create duplicate records.
-5. Select your person ID and type questions; answers include source record IDs.
+MemoFlow opens as a normal chat assistant:
 
-Keep the earlier day files together in the selected file's folder, or place them under `data/days/`. Filenames must contain a day marker such as `day-01.jsonl`, `day-2.jsonl`, or `Day 3.jsonl`. The TUI will not guess a day from file selection order.
+1. Enter your workspace name once. You do not need to know or type an internal person ID. This identity step is required so MemoFlow can enforce private and restricted visibility correctly.
+2. Select a JSONL day file. MemoFlow detects the day from its filename and imports the available history from Day 1 through that day into its persistent SQLite database. It never scans or imports future days.
+3. Start typing natural-language questions directly. Mention people by name; MemoFlow asks the language model to resolve names against `people.json`, validates the returned IDs against that directory, and uses the resolved identity for retrieval.
+4. Use `/file` to select and ingest another day file, `/whoami` to see the active workspace identity, or `/exit` to quit.
 
-Commands inside question mode:
-- `/person` — switch the person asking
-- `/file` — return to the file selection menu
-- `/exit` — quit question mode
+If two people have the same name, MemoFlow asks you to disambiguate instead of guessing. Internal IDs are used by the application and database, not required from the user.
 
-You can also launch it explicitly with `python main.py tui`.
+Keep earlier day files together in the selected file's folder, or place them under `data/days/`. Filenames must contain a day marker such as `day-01.jsonl`, `day-2.jsonl`, or `Day 3.jsonl`. Missing earlier days cause a clear error rather than silently creating incomplete history. Re-importing an existing record ID is skipped to avoid duplicate history.
+
+**Data and privacy:** selected dataset records are stored in the local SQLite database. The database is shared workspace storage, not a separate copy per person. Every query is filtered by organization, visibility (`team`, `private`, `restricted`), as-of time, and forget rules before evidence is sent to the LLM. Mentioning another person's name never grants access to their private records.
+
 
 ## Architecture & Tech Stack
 
