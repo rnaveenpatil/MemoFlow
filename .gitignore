@@ -1,3 +1,30 @@
-__pycache__/
-*.pyc
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Databases & local persistent stores
+*.db
+*.sqlite
+*.sqlite3
 memoflow.db
+.r3_*_store.json
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Logs & run artifacts
+*.log
+log.jsonl
+runs/
+
+# Editor & OS metadata
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
