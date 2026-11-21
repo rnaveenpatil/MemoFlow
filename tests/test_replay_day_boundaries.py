@@ -158,10 +158,10 @@ class ReplayDayBoundaryTests(unittest.TestCase):
             }),
             "usage": {"input_tokens": 120, "output_tokens": 35, "cost_usd": 0, "ms": 5},
         }
-        with patch("MemoFlow.brief_engine.get_person_org", return_value="orgA"), \\
-             patch("MemoFlow.brief_engine.get_person_zone", return_value="UTC"), \\
-             patch("MemoFlow.brief_engine.call_llm", return_value=response):
-            briefs = generate_briefs("alice", "2026-11-01", db_path=self.db_path, dataset_day=1)
+        with patch("MemoFlow.brief_engine.get_person_org", return_value="orgA"):
+            with patch("MemoFlow.brief_engine.get_person_zone", return_value="UTC"):
+                with patch("MemoFlow.brief_engine.call_llm", return_value=response):
+                    briefs = generate_briefs("alice", "2026-11-01", db_path=self.db_path, dataset_day=1)
         self.assertEqual(len(briefs), 1)
         self.assertEqual(briefs[0]["status"], "brief")
         self.assertEqual(briefs[0]["promises"][0]["owner"], "alice")
