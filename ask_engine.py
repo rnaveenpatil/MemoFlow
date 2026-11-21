@@ -401,7 +401,7 @@ def _empty(usage, answer=None, clarify=None, refused=None, matched=None):
     }
 
 
-def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=None):
+def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=None, include_user_updates=False):
     started = time.monotonic()
     init_db(reset=False, db_path=db_path)
     conn = get_connection(db_path)
@@ -445,6 +445,26 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
              "meeting": row["meeting"], "text": row["words"]}
             for row in correction_rows if row["words"]
         ]
+        user_updates = []
+        if include_user_updates:
+            if workspace_session:
+                update_rows = conn.execute(
+                    """SELECT id, text, created_at FROM user_updates
+                       WHERE org = ? AND scope = 'workspace'
+                         AND (available_day IS NULL OR available_day <= ?)
+                       ORDER BY created_at ASC""", (org, dataset_day)
+                ).fetchall()
+            else:
+                update_rows = conn.execute(
+                    """SELECT id, text, created_at FROM user_updates
+                       WHERE org = ? AND scope = 'person' AND author = ?
+                         AND (available_day IS NULL OR available_day <= ?)
+                       ORDER BY created_at ASC""", (org, str(person), dataset_day)
+                ).fetchall()
+            user_updates = [
+                {"id": row["id"], "text": row["text"], "created_at": row["created_at"]}
+                for row in update_rows
+            ]
         tasks = []
         people = _load_people(conn, org, dataset_day=dataset_day, person=person, forgets=forget_terms)
         cutoff = _valid_utc(dataset_cutoff) if dataset_cutoff else None
@@ -595,8 +615,13 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                     + update_text
                 )
             }
-            from MemoFlow.db import insert_record
-            insert_record(conn, update_record, dataset_day)
+            scope = "workspace" if workspace_session else "person"
+            conn.execute(
+                """INSERT INTO user_updates
+                   (id, org, scope, author, text, created_at, available_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (record_id, org, scope, str(person), update_text, at, dataset_day)
+            )
             conn.commit()
             return _empty(usage, answer={
                 "text": "Saved to workspace memory as a user-provided update. It is not treated as independently verified dataset evidence.",
@@ -672,8 +697,9 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             "effective_time_window": query_time,
             "evidence": candidates,
             "user_corrections": corrections,
+            "user_provided_updates": user_updates,
             "instructions": (
-                "Answer from authorized evidence together with the user's scoped corrections. A correction is "
+                "Answer from authorized evidence, the explicitly enabled and correctly scoped user-provided updates, and the user's scoped corrections. Updates are not dataset evidence and must never be cited as imported records. A correction is "
                 "user-provided memory with provenance, not an imported record. Use it to supersede "
                 "the corrected belief only for this user; do not expose it to other users. Understand "
                 "corrections expressed in natural language, including "
