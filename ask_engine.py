@@ -193,8 +193,7 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None):
             "to an available client only when evidence supports it. Select a task only when the "
             "question identifies it sufficiently. Choose intent: task_lookup, record_lookup, "
             "privacy_request, or unknown. For task_lookup choose field owner, due, status, or summary. "
-            "For record_lookup provide concise search_terms. If multiple tasks are plausible, set "
-            "needs_clarification true and return candidate task IDs. Do not guess. "
+            "For record_lookup provide concise search_terms. For task_lookup, if one task fits, return its exact task_id. If two or more fit comparably, set needs_clarification true, return every plausible candidate_task_ids value, and ask one concise question naming the candidate titles. If none fit, do not select a task. Never omit candidate IDs when ambiguity is present. Do not guess. "
             "Classify requests for another person's private personal information or private "
             "conversations as privacy_request. Use workspace_update only when the user explicitly "
             "says remember, save, add, or correct a fact; return update_text with the exact fact. "
@@ -439,17 +438,38 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 if key in task_interpretation:
                     interpretation[key] = task_interpretation[key]
 
-        if interpretation.get("needs_clarification"):
-            options = []
+        if interpretation.get("intent") == "task_lookup":
             valid = {t["id"]: t for t in tasks}
-            for task_id in interpretation.get("candidate_task_ids") or []:
-                if task_id in valid:
-                    options.append({"id": task_id, "text": valid[task_id]["title"]})
-            if options:
+            candidate_ids = []
+            for candidate_id in interpretation.get("candidate_task_ids") or []:
+                if candidate_id in valid and candidate_id not in candidate_ids:
+                    candidate_ids.append(candidate_id)
+            selected_task = interpretation.get("task_id")
+            if selected_task not in valid:
+                selected_task = None
+            if len(candidate_ids) > 1:
+                options = [{"id": tid, "text": valid[tid]["title"]} for tid in candidate_ids]
                 return _empty(usage, clarify={
-                    "question": interpretation.get("clarification") or "Which task do you mean?",
+                    "question": interpretation.get("clarification") or "Which of these tasks do you mean?",
                     "options": options
                 })
+            if len(candidate_ids) == 1 and selected_task is None:
+                interpretation["task_id"] = candidate_ids[0]
+            elif selected_task is None and interpretation.get("needs_clarification"):
+                return _empty(usage, clarify={
+                    "question": interpretation.get("clarification") or "Which task are you referring to?",
+                    "options": []
+                })
+            elif selected_task is None:
+                return _empty(usage, answer={
+                    "text": "I couldn't identify a matching task from the authorized records.",
+                    "sources": []
+                })
+        elif interpretation.get("needs_clarification"):
+            return _empty(usage, clarify={
+                "question": interpretation.get("clarification") or "Could you clarify what you mean?",
+                "options": []
+            })
 
         intent = interpretation.get("intent")
         if intent == "forget_request":
