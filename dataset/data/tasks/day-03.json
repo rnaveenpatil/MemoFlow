@@ -1,0 +1,56 @@
+{
+  "briefs": [
+    {
+      "person": "p02",
+      "date": "2026-11-05"
+    },
+    {
+      "person": "p02",
+      "date": "2026-11-05"
+    }
+  ],
+  "asks": [
+    {
+      "qid": "q03-01",
+      "person": "p02",
+      "at": "2026-11-04T18:00:00Z",
+      "ask": "When is my Dubai trip?"
+    },
+    {
+      "qid": "q03-02",
+      "person": "p03",
+      "at": "2026-11-04T18:00:00Z",
+      "ask": "Is Meera travelling anywhere this month?"
+    },
+    {
+      "qid": "q03-03",
+      "person": "p02",
+      "at": "2026-11-04T18:00:00Z",
+      "ask": "What's the status of homepage redesign (the Mumbai client)?"
+    },
+    {
+      "qid": "q03-04",
+      "person": "p25",
+      "at": "2026-11-04T23:30:00Z",
+      "ask": "Who owns the CL fleet dashboard v1?"
+    },
+    {
+      "qid": "q03-05",
+      "person": "p02",
+      "at": "2026-11-04T18:00:00Z",
+      "ask": "Who owns the NB Retail homepage redesign?"
+    },
+    {
+      "qid": "q03-06",
+      "person": "p03",
+      "at": "2026-11-04T18:00:00Z",
+      "ask": "What's the status of uat test plan (CL)?"
+    },
+    {
+      "qid": "q03-07",
+      "person": "p25",
+      "at": "2026-11-04T23:30:00Z",
+      "ask": "Who owns the CL tms data pipeline?"
+    }
+  ]
+}

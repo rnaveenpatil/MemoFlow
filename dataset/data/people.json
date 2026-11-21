@@ -1,0 +1,235 @@
+{
+  "org_kp": {
+    "name": "Kitepoint Studio",
+    "people": [
+      {
+        "id": "p01",
+        "name": "Nandini Rao",
+        "role": "founder",
+        "team": "leadership",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p02",
+        "name": "Meera Iyer",
+        "role": "manager",
+        "team": "client",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p03",
+        "name": "Rohan Kapoor",
+        "role": "manager",
+        "team": "client",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p04",
+        "name": "Kavya Nair",
+        "role": "accounts lead",
+        "team": "accounts",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p05",
+        "name": "Sameer Khan",
+        "role": "dev lead",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p06",
+        "name": "Ishita Bose",
+        "role": "senior designer",
+        "team": "design",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p07",
+        "name": "Vikram Shah",
+        "role": "account executive",
+        "team": "client",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p08",
+        "name": "Aditi Menon",
+        "role": "copywriter",
+        "team": "content",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p09",
+        "name": "Farhan Ali",
+        "role": "developer",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p10",
+        "name": "Pooja Desai",
+        "role": "developer",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p11",
+        "name": "Arjun Mehta",
+        "role": "billing executive",
+        "team": "accounts",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p12",
+        "name": "Neha Joshi",
+        "role": "project manager",
+        "team": "client",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p13",
+        "name": "Karan Malhotra",
+        "role": "sales",
+        "team": "sales",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p14",
+        "name": "Tanvi Kulkarni",
+        "role": "intern",
+        "team": "client",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p15",
+        "name": "Rahul Verma",
+        "role": "QA engineer",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p16",
+        "name": "Sneha Pillai",
+        "role": "social media",
+        "team": "content",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p17",
+        "name": "Dev Patel",
+        "role": "data analyst",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p18",
+        "name": "Ananya Ghosh",
+        "role": "designer",
+        "team": "design",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p19",
+        "name": "Siddharth Rao",
+        "role": "developer",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p20",
+        "name": "Zoya Sheikh",
+        "role": "HR",
+        "team": "ops",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p21",
+        "name": "Manish Gupta",
+        "role": "operations",
+        "team": "ops",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p22",
+        "name": "Ritika Singh",
+        "role": "content writer",
+        "team": "content",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p23",
+        "name": "Arjun Rao",
+        "role": "designer",
+        "team": "design",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p24",
+        "name": "Kabir Sethi",
+        "role": "intern",
+        "team": "dev",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "p25",
+        "name": "Liam Carter",
+        "role": "account manager",
+        "team": "client",
+        "zone": "Europe/London"
+      }
+    ]
+  },
+  "org_bw": {
+    "name": "Brightwave Media",
+    "people": [
+      {
+        "id": "q01",
+        "name": "Gaurav Bhalla",
+        "role": "founder",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q02",
+        "name": "Shreya Das",
+        "role": "manager",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q03",
+        "name": "Imran Qureshi",
+        "role": "sales",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q04",
+        "name": "Leena Fernandes",
+        "role": "designer",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q05",
+        "name": "Varun Chopra",
+        "role": "developer",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q06",
+        "name": "Diya Rawat",
+        "role": "strategist",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q07",
+        "name": "Omar Siddiqui",
+        "role": "developer",
+        "zone": "Asia/Kolkata"
+      },
+      {
+        "id": "q08",
+        "name": "Payal Jain",
+        "role": "copywriter",
+        "zone": "Asia/Kolkata"
+      }
+    ]
+  }
+}

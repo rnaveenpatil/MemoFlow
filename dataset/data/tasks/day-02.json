@@ -1,0 +1,50 @@
+{
+  "briefs": [
+    {
+      "person": "p25",
+      "date": "2026-11-04"
+    },
+    {
+      "person": "p03",
+      "date": "2026-11-04"
+    }
+  ],
+  "asks": [
+    {
+      "qid": "q02-01",
+      "person": "p02",
+      "at": "2026-11-03T18:00:00Z",
+      "ask": "Who owns billing for Northbeam now?"
+    },
+    {
+      "qid": "q02-02",
+      "person": "p25",
+      "at": "2026-11-03T23:30:00Z",
+      "ask": "When is the driver app login fix for Cobaltline due?"
+    },
+    {
+      "qid": "q02-03",
+      "person": "p02",
+      "at": "2026-11-03T18:00:00Z",
+      "ask": "When is the store locator page for Northbeam due?"
+    },
+    {
+      "qid": "q02-04",
+      "person": "p25",
+      "at": "2026-11-03T23:30:00Z",
+      "ask": "What's the status of fleet dashboard v1 (CL)?"
+    },
+    {
+      "qid": "q02-05",
+      "person": "p12",
+      "at": "2026-11-03T18:00:00Z",
+      "ask": "What's the status of product feed fix (Northbeam)?"
+    },
+    {
+      "qid": "q02-06",
+      "person": "p12",
+      "at": "2026-11-03T18:00:00Z",
+      "ask": "What's the status of homepage redesign (NB)?"
+    }
+  ]
+}

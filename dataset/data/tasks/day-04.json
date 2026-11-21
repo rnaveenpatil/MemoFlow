@@ -1,0 +1,56 @@
+{
+  "briefs": [
+    {
+      "person": "p12",
+      "date": "2026-11-06"
+    },
+    {
+      "person": "p03",
+      "date": "2026-11-06"
+    }
+  ],
+  "asks": [
+    {
+      "qid": "q04-01",
+      "person": "p02",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "Is the Friday thing done?"
+    },
+    {
+      "qid": "q04-02",
+      "person": "p02",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "Who owns billing for the Mumbai client?"
+    },
+    {
+      "qid": "q04-03",
+      "person": "p02",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "What's the status of campaign copy v2 (Northbeam)?"
+    },
+    {
+      "qid": "q04-04",
+      "person": "p02",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "What's the status of launch email sequence (NB Retail)?"
+    },
+    {
+      "qid": "q04-05",
+      "person": "p12",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "What's the status of analytics tagging (Northbeam)?"
+    },
+    {
+      "qid": "q04-06",
+      "person": "p25",
+      "at": "2026-11-05T23:30:00Z",
+      "ask": "Who owns the London account ops report template?"
+    },
+    {
+      "qid": "q04-07",
+      "person": "p02",
+      "at": "2026-11-05T18:00:00Z",
+      "ask": "What's the status of analytics tagging (NB)?"
+    }
+  ]
+}

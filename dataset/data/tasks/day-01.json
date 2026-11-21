@@ -1,0 +1,46 @@
+{
+  "briefs": [
+    {
+      "person": "p02",
+      "date": "2026-11-03"
+    }
+  ],
+  "asks": [
+    {
+      "qid": "q01-01",
+      "person": "p02",
+      "at": "2026-11-02T18:00:00Z",
+      "ask": "Who handles billing for NB?"
+    },
+    {
+      "qid": "q01-02",
+      "person": "p25",
+      "at": "2026-11-02T23:30:00Z",
+      "ask": "When is the tms data pipeline for the London account due?"
+    },
+    {
+      "qid": "q01-03",
+      "person": "p02",
+      "at": "2026-11-02T18:00:00Z",
+      "ask": "When is the product feed fix for Northbeam due?"
+    },
+    {
+      "qid": "q01-04",
+      "person": "p25",
+      "at": "2026-11-02T23:30:00Z",
+      "ask": "When is the ops report template for the London account due?"
+    },
+    {
+      "qid": "q01-05",
+      "person": "p25",
+      "at": "2026-11-02T23:30:00Z",
+      "ask": "Who owns the Cobalt rate card update?"
+    },
+    {
+      "qid": "q01-06",
+      "person": "p02",
+      "at": "2026-11-02T18:00:00Z",
+      "ask": "Who owns the NB homepage redesign?"
+    }
+  ]
+}

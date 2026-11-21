@@ -1,0 +1,47 @@
+{
+  "briefs": [],
+  "asks": [
+    {
+      "qid": "q05-01",
+      "person": "p03",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "What did Meera say about me?"
+    },
+    {
+      "qid": "q05-02",
+      "person": "p02",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "Send the NB deck to Arjun. Which Arjun is that?"
+    },
+    {
+      "qid": "q05-03",
+      "person": "p02",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "When is the homepage redesign for NB due?"
+    },
+    {
+      "qid": "q05-04",
+      "person": "p03",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "Who owns the Cobalt uat test plan?"
+    },
+    {
+      "qid": "q05-05",
+      "person": "p02",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "Who owns the Northbeam revised sow?"
+    },
+    {
+      "qid": "q05-06",
+      "person": "p02",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "Who owns the NB store locator page?"
+    },
+    {
+      "qid": "q05-07",
+      "person": "p03",
+      "at": "2026-11-06T18:00:00Z",
+      "ask": "When is the tms data pipeline for the London account due?"
+    }
+  ]
+}
