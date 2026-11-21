@@ -50,16 +50,57 @@ def _json_from_model(text):
 
 
 def _load_clients(conn):
-    path = DATA_DIR + "/clients.json"
     try:
-        with open(path, encoding="utf-8") as f:
-            clients = json.load(f)
-        return [{"id": c["id"], "name": c["name"]} for c in clients]
-    except (OSError, ValueError, KeyError, TypeError):
         rows = conn.execute(
-            "SELECT DISTINCT client FROM records WHERE client IS NOT NULL ORDER BY client"
+            "SELECT client_id, name FROM clients ORDER BY name"
         ).fetchall()
-        return [{"id": r["client"], "name": r["client"]} for r in rows]
+        if rows:
+            return [{"id": row["client_id"], "name": row["name"]} for row in rows]
+    except Exception:
+        pass
+    rows = conn.execute(
+        "SELECT DISTINCT client FROM records WHERE client IS NOT NULL ORDER BY client"
+    ).fetchall()
+    return [{"id": row["client"], "name": row["client"]} for row in rows]
+
+
+def _load_people(conn, org=None):
+    try:
+        if org is None:
+            rows = conn.execute(
+                "SELECT person_id, org, name, role FROM people ORDER BY name"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT person_id, org, name, role FROM people WHERE org = ? ORDER BY name",
+                (org,)
+            ).fetchall()
+        if rows:
+            return [
+                {"id": row["person_id"], "org": row["org"],
+                 "name": row["name"], "role": row["role"]}
+                for row in rows
+            ]
+    except Exception:
+        pass
+    values = list(PEOPLE_BY_ID.values())
+    if org is not None:
+        values = [person for person in values if person.get("org") == org]
+    return [
+        {"id": person["id"], "org": person.get("org"),
+         "name": person.get("name"), "role": person.get("role")}
+        for person in values
+    ]
+
+
+def _person_org(conn, person_id):
+    if person_id == "__workspace__":
+        orgs = sorted({p.get("org") for p in _load_people(conn) if p.get("org")})
+        return orgs[0] if len(orgs) == 1 else None
+    row = conn.execute(
+        "SELECT org FROM people WHERE person_id = ?", (str(person_id),)
+    ).fetchone()
+    return row["org"] if row else get_person_org(person_id)
 
 
 def _task_catalog(conn, at, org, person, forgets=None):
@@ -268,16 +309,7 @@ def answer_ask(person, at, ask, db_path=None):
     started = time.monotonic()
     conn = get_connection(db_path)
     try:
-        if person == "__workspace__":
-            workspace_orgs = sorted({p.get("org") for p in PEOPLE_BY_ID.values() if p.get("org")})
-            if len(workspace_orgs) != 1:
-                return _empty(_usage(None, started), answer={
-                    "text": "I need a single workspace organization to safely search team-visible records. The loaded people directory contains multiple organizations or none.",
-                    "sources": []
-                })
-            org = workspace_orgs[0]
-        else:
-            org = get_person_org(person)
+        org = _person_org(conn, person)
         if not org:
             return _empty(_usage(None, started), answer={
                 "text": "I can't identify the workspace organization from the loaded people directory.",
@@ -287,8 +319,7 @@ def answer_ask(person, at, ask, db_path=None):
         forget_terms = [row["what"] for row in forget_rows if row["what"]]
         clients = _load_clients(conn)
         tasks = []
-        people = [{"id": p["id"], "name": p.get("name"), "role": p.get("role")}
-                  for p in PEOPLE_BY_ID.values() if p.get("org") == org]
+        people = _load_people(conn, org)
         interpretation, interpretation_call = _interpret(ask, at, person, clients, tasks, people)
         usage = _usage(interpretation_call, started)
 
@@ -414,7 +445,7 @@ def answer_ask(person, at, ask, db_path=None):
             record, source_id = state
             field = interpretation.get("field")
             owner = record.get("owner")
-            owner_name = PEOPLE_BY_ID.get(owner, {}).get("name", owner)
+            owner_name = next((p["name"] for p in people if p["id"] == owner), owner)
             due = record.get("due")
             status = record.get("status")
             title = record.get("title") or task_id
