@@ -25,7 +25,7 @@ Return only valid JSON matching the requested shape. Never invent source IDs.
 
 def _system_prompt():
     """Load repository operating guidance when available; code remains authoritative."""
-    guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "agent.md")
+    guide_path = os.path.join(os.path.dirname(__file__), "agent.md")
     try:
         with open(guide_path, encoding="utf-8") as handle:
             guide = handle.read(3000)
