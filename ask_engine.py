@@ -265,6 +265,44 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None, correc
     return _json_from_model(result.get("text")), result
 
 
+def _recheck_conversation_intent(ask):
+    """Give uncertain intent one focused semantic classification retry.
+
+    This is model-based, not a keyword/regex shortcut. Only an explicit
+    conversation classification can bypass workplace retrieval.
+    """
+    prompt = {
+        "user_message": ask,
+        "task": (
+            "Classify this message as either ordinary conversation or a request "
+            "that needs workplace data. Ordinary conversation includes greetings, "
+            "typos in greetings, thanks, acknowledgements, and casual social chat. "
+            "A workplace request asks about people, files, meetings, clients, tasks, "
+            "decisions, commitments, or historical organizational facts. "
+            "Do not infer workplace intent when none is expressed. "
+            "If ordinary conversation, write a short natural reply. "
+            "Return only JSON: {\\"intent\\":\\"conversation\\" or \\"workplace\\", "
+            "\\"conversation_response\\": string or null}."
+        ),
+    }
+    result = call_llm(
+        json.dumps(prompt, ensure_ascii=False),
+        "You are a precise intent classifier for a workplace assistant. "
+        "Classify the meaning of the complete message, including common typos. "
+        "Never invent workplace facts. Return only the requested JSON.",
+        max_tokens=100,
+    )
+    if not result:
+        return None, None
+    parsed = _json_from_model(result.get("text"))
+    if not isinstance(parsed, dict) or parsed.get("intent") != "conversation":
+        return None, result
+    response = parsed.get("conversation_response")
+    if not isinstance(response, str) or not response.strip():
+        response = "Hello! How can I help you with your work today?"
+    return {"intent": "conversation", "conversation_response": response.strip()}, result
+
+
 def _valid_utc(value):
     """Validate model-proposed timestamps and normalize them to sortable UTC ISO strings."""
     if not isinstance(value, str) or not value.strip():
@@ -488,6 +526,20 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
             ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections, user_updates=user_updates
         )
         usage = _usage(interpretation_call, started)
+
+        if not interpretation or interpretation.get("intent") == "unknown" or interpretation.get("needs_clarification"):
+            # A focused second model pass resolves uncertain social-vs-workplace
+            # intent. Only an explicit conversation result may bypass retrieval.
+            recovered, recovery_call = _recheck_conversation_intent(ask)
+            if recovered:
+                interpretation = recovered
+                extra = _usage(recovery_call, started)
+                usage = {
+                    "input_tokens": usage.get("input_tokens", 0) + extra.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0) + extra.get("output_tokens", 0),
+                    "cost_usd": round(usage.get("cost_usd", 0) + extra.get("cost_usd", 0), 6),
+                    "ms": max(0, int((time.monotonic() - started) * 1000)),
+                }
 
         if not interpretation:
             # No model: do not pretend keyword overlap is reliable understanding.
