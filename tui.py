@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from MemoFlow.ask_engine import answer_ask
 from MemoFlow.config import DATA_DIR, PEOPLE_BY_ID
-from MemoFlow.db import get_connection, init_db, insert_record
+from MemoFlow.db import get_connection, init_db, insert_record, sync_workspace_metadata
 
 
 _DAY_RE = re.compile(r"(?:^|[^a-z0-9])day[-_ ]?0*(\d+)(?:[^0-9]|$)", re.I)
@@ -159,6 +159,7 @@ def _ingest_cumulative(selected_path):
         init_db(reset=False)
         conn = get_connection()
         try:
+            sync_workspace_metadata(conn)
             existing_days = {
                 row["day"] for row in conn.execute(
                     "SELECT DISTINCT day FROM records WHERE day IS NOT NULL"
