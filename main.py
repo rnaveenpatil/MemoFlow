@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from MemoFlow.config import DATA_DIR
-from MemoFlow.db import init_db, get_connection, insert_record
+from MemoFlow.db import init_db, get_connection, insert_record, sync_workspace_metadata
 from MemoFlow.brief_engine import generate_briefs
 from MemoFlow.ask_engine import answer_ask
 
@@ -64,6 +64,7 @@ def handle_ingest(day):
         raise ValueError("Day must be a positive integer.")
     init_db(reset=False)
     conn = get_connection()
+    sync_workspace_metadata(conn)
     imported = {}
     feedback_count = 0
     try:
