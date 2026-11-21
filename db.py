@@ -83,6 +83,39 @@ def init_db(reset=False, db_path=None):
     )
     """)
 
+    # User-authored memory is deliberately separate from challenge evidence.
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_updates (
+        id TEXT PRIMARY KEY,
+        org TEXT NOT NULL,
+        scope TEXT NOT NULL CHECK(scope IN ('workspace', 'person')),
+        author TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        available_day INTEGER
+    )
+    """)
+
+    # Migrate updates written by older versions out of dataset records/FTS.
+    legacy_updates = cur.execute(
+        "SELECT id, day, org, at, author, visibility, title, body FROM records "
+        "WHERE id LIKE 'user-update-%'"
+    ).fetchall()
+    for row in legacy_updates:
+        body = row["body"] or ""
+        prefix = "USER-PROVIDED MEMORY (not independently verified). Treat this as a later user instruction or correction, not as an original dataset record. "
+        update_text = body[len(prefix):] if body.startswith(prefix) else body
+        scope = "workspace" if row["author"] == "user_provided" else "person"
+        cur.execute(
+            """INSERT OR IGNORE INTO user_updates
+               (id, org, scope, author, text, created_at, available_day)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (row["id"], row["org"], scope, row["author"], update_text,
+             row["at"] or "", row["day"])
+        )
+        cur.execute("DELETE FROM records_fts WHERE id = ?", (row["id"],))
+        cur.execute("DELETE FROM records WHERE id = ?", (row["id"],))
+
     cur.execute('''
     CREATE TABLE IF NOT EXISTS tasks (
         task_id TEXT PRIMARY KEY,
