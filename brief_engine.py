@@ -322,11 +322,23 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
         for promise in model_promises:
             source = evidence_by_id[promise["sources"][0]]
             cur.execute(
-                """INSERT OR IGNORE INTO promises
-                   (record_id, client, owner, what, due, day, at, fulfilled, fulfilled_day, available_day)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)""",
+                """INSERT INTO promises
+                   (record_id, client, owner, what, due, day, at, fulfilled,
+                    fulfilled_day, fulfilled_at, available_day)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?)
+                   ON CONFLICT(record_id) DO UPDATE SET
+                     client = excluded.client,
+                     owner = excluded.owner,
+                     what = excluded.what,
+                     due = excluded.due,
+                     day = excluded.day,
+                     at = excluded.at,
+                     available_day = MIN(
+                         COALESCE(promises.available_day, excluded.available_day),
+                         excluded.available_day
+                     )""",
                 (source["id"], client, promise["owner"], promise["what"], promise["due"],
-                 source["day"], source["at"], dataset_day)
+                 source["day"], source["at"], source["day"])
             )
         for promise_source, delivery_source in fulfilled_promises:
             delivery = evidence_by_id[delivery_source]
@@ -439,7 +451,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
 
         open_these = []
         if final_changed:
-            for c in final_changed[:2]:
+            for c in final_changed[:3]:
                 open_these.append({
                     'record': c['sources'][0],
                     'why': c['text']
@@ -450,6 +462,12 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
             q_to_ask = {
                 'text': f"Can we review progress on {final_changed[0]['text']}?",
                 'sources': final_changed[0]['sources']
+            }
+        elif active_promises:
+            first_promise = active_promises[0]
+            q_to_ask = {
+                'text': f"Can we confirm delivery of {first_promise['what']} by {first_promise['due']}?",
+                'sources": first_promise['sources']
             }
 
         ms = int((time.monotonic() - t0) * 1000)
