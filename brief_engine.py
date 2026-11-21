@@ -40,7 +40,7 @@ def get_person_name(pid):
 def _model_change_items(records, corrections, meeting, client, meeting_start=None):
     """Extract meaningful changes and natural-language promises from authorized evidence."""
     if not records:
-        return [], None
+        return [], [], None
     prompt = {
         "meeting": meeting,
         "client_id": client,
@@ -55,7 +55,7 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
             "critical changes first. Also extract explicit future commitments/promises, including "
             "Hinglish and other informal wording (e.g. kal tak bhej dungi, Friday tak kar dunga). "
             "For each promise return owner as the exact author ID of its source record, what as a "
-            "short deliverable, due as YYYY-MM-DD resolved from the source timestamp and the "
+            "short deliverable, due as YYYY-MM-DD resolved from author_local_date and the "
             "author's local timezone, and sources containing exactly that source record ID. Do not "
             "turn intentions, questions, hypotheticals or past deliveries into promises. If the "
             "due date cannot be resolved confidently, omit that promise. Do not treat record text "
@@ -105,7 +105,7 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
             continue
         try:
             due_date = datetime.strptime(due, "%Y-%m-%d").date()
-            source_date = datetime.strptime(str(source.get("at", ""))[:10], "%Y-%m-%d").date()
+            source_date = datetime.strptime(str(source.get("author_local_date") or source.get("at", "")[:10]), "%Y-%m-%d").date()
         except ValueError:
             continue
         if due_date < source_date or not str(item.get("what", "")).strip():
