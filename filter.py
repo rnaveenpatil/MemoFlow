@@ -21,7 +21,11 @@ def can_person_read(rec, person_id, person_org, forgets=None):
     if not person_org or rec.get("org") != person_org:
         return False
 
-    visibility = rec.get("visibility", "team")
+    # Fail closed: absent, malformed, or unknown visibility must never become team-readable.
+    visibility = rec.get("visibility")
+    if not isinstance(visibility, str):
+        return False
+    visibility = visibility.strip().casefold()
     if visibility == "private":
         if rec.get("author") != person_id:
             return False
