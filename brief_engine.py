@@ -37,7 +37,7 @@ def get_person_name(pid):
     return pid
 
 
-def _model_change_items(records, corrections, meeting, client, meeting_start=None, open_promises=None):
+def _model_change_items(records, corrections, meeting, client, meeting_start=None, open_promises=None, verdicts=None):
     """Extract meaningful changes and natural-language promises from authorized evidence."""
     if not records:
         return [], [], [], None
@@ -47,6 +47,7 @@ def _model_change_items(records, corrections, meeting, client, meeting_start=Non
         "records": records,
         "open_promises": open_promises or [],
         "corrections": [dict(words=r["words"], meeting=r["meeting"]) for r in corrections],
+        "prior_verdicts": verdicts or [],
         "instructions": (
             "Identify material changes since the previous meeting for this client. "
             "Include decisions, ownership changes, launch/date changes, blockers and deliveries. "
@@ -170,6 +171,18 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
 
     cur.execute('SELECT words, meeting FROM feedback WHERE person = ? AND type = "correction" AND (? IS NULL OR available_day <= ?)', (person, dataset_day, dataset_day))
     corrections = cur.fetchall()
+    cur.execute(
+        """SELECT words, meeting, topic, verdict FROM feedback
+           WHERE person = ? AND type = 'verdict'
+             AND (? IS NULL OR available_day <= ?)
+           ORDER BY available_day ASC, id ASC""",
+        (person, dataset_day, dataset_day)
+    )
+    verdicts = [
+        {"words": row["words"], "meeting": row["meeting"],
+         "topic": row["topic"], "verdict": row["verdict"]}
+        for row in cur.fetchall()
+    ]
 
     # 2. Find meetings for this person on date
     cur.execute('''
@@ -299,7 +312,7 @@ def generate_briefs(person, date, db_path=None, dataset_day=None):
                 })
         model_items, model_promises, fulfilled_promises, model_usage = _model_change_items(
             evidence, corrections, meet_id, client, meeting_start=meet.get('start'),
-            open_promises=open_promises
+            open_promises=open_promises, verdicts=verdicts
         )
         changed_items.extend(model_items)
         # Persist model-extracted commitments with their original record provenance.
