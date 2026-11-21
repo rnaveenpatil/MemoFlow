@@ -217,47 +217,42 @@ def _ingest_cumulative(selected_path):
         return False
 
 
-def _resolve_workspace_person(name):
-    """Resolve a human-entered workspace name; never ask users for internal IDs."""
-    query = " ".join((name or "").casefold().split())
-    if not query:
-        return None, []
-
-    exact = [
-        (pid, person) for pid, person in PEOPLE_BY_ID.items()
-        if " ".join(person.get("name", "").casefold().split()) == query
-    ]
-    if len(exact) == 1:
-        return exact[0][0], []
-    if len(exact) > 1:
-        return None, exact
-
-    # Permit a unique full-name/partial-name match, but never guess between people.
-    matches = [
-        (pid, person) for pid, person in PEOPLE_BY_ID.items()
-        if query in " ".join(person.get("name", "").casefold().split())
-    ]
-    if len(matches) == 1:
-        return matches[0][0], []
-    return None, matches
-
-
-def _choose_workspace_person():
-    if not PEOPLE_BY_ID:
-        raise RuntimeError("No people.json was found. MemoFlow cannot safely establish workspace visibility.")
+def _ask_loop(person):
+    print("\nMemoFlow is ready. Chat naturally. Mention people and clients by name.")
+    print("Commands: /file to load more data, /exit to quit.")
     while True:
-        name = input("\nMemoFlow: What's your name in this workspace? ").strip()
-        person_id, matches = _resolve_workspace_person(name)
-        if person_id:
-            person = PEOPLE_BY_ID[person_id]
-            print(f"MemoFlow: Hi {person.get('name', name)}. Your workspace access is ready.")
-            return person_id
-        if matches:
-            print("MemoFlow: I found more than one possible match. Enter the full name:")
-            for _, person in matches:
-                print(f"  - {person.get('name')} ({person.get('role', 'role not listed')})")
+        try:
+            question = input("\nYou: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting MemoFlow.")
+            return
+        if not question:
+            continue
+        if question.casefold() in {"/exit", "exit", "quit"}:
+            return
+        if question.casefold() == "/file":
+            return "select_file"
+        asked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            result = answer_ask(person, asked_at, question)
+        except Exception as exc:
+            print(f"MemoFlow error: {exc}")
+            continue
+        if result.get("refused"):
+            print(f"MemoFlow: I can't provide that: {result['refused'].get('reason', 'Not authorized.')}")
+        elif result.get("clarify"):
+            clarification = result["clarify"]
+            print(f"MemoFlow: {clarification.get('question', 'Can you clarify?')}")
+            for option in clarification.get("options", []):
+                print(f"  - {option.get('text', option.get('id', 'Option'))}")
+        elif result.get("answer"):
+            print(f"MemoFlow: {result['answer'].get('text', 'No answer returned.')}")
+            sources = result["answer"].get("sources") or []
+            if sources:
+                print("Sources: " + ", ".join(sources))
         else:
-            print("MemoFlow: I couldn't match that name to this workspace. Try the name shown in the people directory.")
+            print("MemoFlow: I couldn't find a reliable answer in the records available to this workspace.")
+
 
 def _ask_loop(person):
     print("\nMemoFlow is ready. Chat naturally. Use /file to add more data, /whoami to see your session, or /exit to quit.")
@@ -307,20 +302,23 @@ def run_tui():
     print("                 MEMOFLOW")
     print("       Your workspace memory assistant")
     print("=" * 48)
-    print("MemoFlow uses the selected dataset as its workspace memory.")
-    print("Select a day file to load its history, or start with data already in the database.")
+    print("Select a dataset file to load your workspace memory.")
+    print("You do not need to enter employee names or internal IDs to start chatting.")
 
-    person = _choose_workspace_person()
     while True:
         path = _select_jsonl_file()
         if not path:
-            print("No file selected. You can select one later with /file.")
-        else:
-            _ingest_cumulative(path)
-        break
+            print("No file selected. Select a JSONL day file to begin.")
+            continue
+        if _ingest_cumulative(path):
+            break
 
+    # Workspace mode intentionally has no asserted employee identity.
+    # The backend permits team-visible records only for this sentinel;
+    # private and restricted records remain inaccessible.
+    workspace_person = "__workspace__"
     while True:
-        result = _ask_loop(person)
+        result = _ask_loop(workspace_person)
         if result == "select_file":
             path = _select_jsonl_file()
             if path:
