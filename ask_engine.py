@@ -185,7 +185,7 @@ def _task_catalog(conn, at, org, person, forgets=None, dataset_day=None):
     return list(by_id.values())
 
 
-def _interpret(ask, at, person, clients, tasks, people, data_window=None, corrections=None):
+def _interpret(ask, at, person, clients, tasks, people, data_window=None, corrections=None, user_updates=None):
     prompt = {
         "question": ask,
         "current_time_utc": at,
@@ -209,6 +209,7 @@ def _interpret(ask, at, person, clients, tasks, people, data_window=None, correc
         "available_tasks": tasks,
         "available_people": people,
         "user_corrections": corrections or [],
+        "user_provided_updates": user_updates or [],
         "instructions": (
             "Interpret the user's meaning, not exact keywords. Map nicknames and abbreviations "
             "to an available client only when evidence supports it. Apply supplied user_corrections "
@@ -473,7 +474,7 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
         clients = _load_clients(conn, org, person, forgets=forget_terms, dataset_day=dataset_day)
         data_window = _dataset_time_range(conn, org, person, cutoff=cutoff, forgets=forget_terms, dataset_day=dataset_day)
         interpretation, interpretation_call = _interpret(
-            ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections
+            ask, at, person, clients, tasks, people, data_window=data_window, corrections=corrections, user_updates=user_updates
         )
         usage = _usage(interpretation_call, started)
 
@@ -600,21 +601,6 @@ def answer_ask(person, at, ask, db_path=None, dataset_cutoff=None, dataset_day=N
                 })
             update_text = update_text.strip()[:4000]
             record_id = "user-update-" + uuid.uuid4().hex
-            update_record = {
-                "id": record_id,
-                "org": org,
-                "type": "note",
-                "at": at,
-                "author": "user_provided" if workspace_session else person,
-                "client": None,
-                "visibility": "team" if workspace_session else "private",
-                "title": "User-provided workspace update",
-                "body": (
-                    "USER-PROVIDED MEMORY (not independently verified). "
-                    "Treat this as a later user instruction or correction, not as an original dataset record. "
-                    + update_text
-                )
-            }
             scope = "workspace" if workspace_session else "person"
             conn.execute(
                 """INSERT INTO user_updates
