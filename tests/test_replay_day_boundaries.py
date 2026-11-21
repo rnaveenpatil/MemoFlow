@@ -115,8 +115,9 @@ class ReplayDayBoundaryTests(unittest.TestCase):
             "usage": {"input_tokens": 100, "output_tokens": 30, "cost_usd": 0.0, "ms": 5},
         }
         with patch("MemoFlow.brief_engine.call_llm", return_value=response):
-            changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
+            changes, promises, fulfilled, usage = _model_change_items(evidence, [], "meeting1", "clientA")
         self.assertEqual(changes, [])
+        self.assertEqual(fulfilled, [])
         self.assertEqual(len(promises), 1)
         self.assertEqual(promises[0]["owner"], "alice")
         self.assertEqual(promises[0]["due"], "2026-11-03")
@@ -142,6 +143,7 @@ class ReplayDayBoundaryTests(unittest.TestCase):
         with patch("MemoFlow.brief_engine.call_llm", return_value=response):
             changes, promises, usage = _model_change_items(evidence, [], "meeting1", "clientA")
         self.assertEqual(promises, [])
+        self.assertEqual(fulfilled, [])
 
     def test_feedback_is_not_visible_before_its_availability_day(self):
         self.conn.execute(
