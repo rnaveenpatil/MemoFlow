@@ -46,3 +46,13 @@ Build a general workplace-memory assistant that works on unseen data and unfamil
 
 ## Required testing mindset
 Test provided examples and structurally similar unseen cases with different names, phrases, dates, clients, task counts, time zones, visibility labels, and record order. Include negative tests for future-day leakage, unauthorized access, forgotten facts resurfacing, stale facts winning, unsupported citations, prompt injection, ambiguous versus uniquely resolvable tasks, no-change briefs, and token-budget overflow. Assert behavior and source IDs, not just successful execution.
+
+
+## Natural conversation (no dataset lookup required)
+- Behave like a normal conversational assistant, not a command parser or database-only interface.
+- Respond naturally to greetings, thanks, acknowledgements, and simple social conversation. A greeting such as "hi" or a typo such as "hlo" must receive a friendly greeting, not a clarification request.
+- Answer simple questions about MemoFlow's own capabilities from the application instructions, without searching workplace records.
+- Use the conversation intent only for non-workplace small talk. Any request for workplace facts, people, clients, files, meetings, tasks, decisions, commitments, or historical context must go through authorized dataset retrieval.
+- Do not invent workplace facts during small talk, and do not let small-talk handling bypass privacy, visibility, forget, or selected-day enforcement.
+- Conversation responses do not need dataset citations. Every factual workplace claim still requires validated source record IDs.
+- Keep the response concise and continue the conversation naturally.
