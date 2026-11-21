@@ -193,7 +193,8 @@ def init_db(reset=False, db_path=None):
         cur.execute("ALTER TABLE promises ADD COLUMN fulfilled_at TEXT")
     if "available_day" not in promise_columns:
         cur.execute("ALTER TABLE promises ADD COLUMN available_day INTEGER")
-        cur.execute("UPDATE promises SET available_day = COALESCE(day, 0)")
+    # Repair partially migrated databases too, not only newly added columns.
+    cur.execute("UPDATE promises SET available_day = COALESCE(available_day, day, 0)")
 
     conn.commit()
     conn.close()
